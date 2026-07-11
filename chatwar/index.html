@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>戦術マップツール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        #map-container {
+            cursor: crosshair;
+            position: relative;
+            overflow: auto;
+        }
+        canvas {
+            display: block;
+        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        
+        .nato-icon {
+            position: absolute;
+            width: 32px;
+            height: 24px;
+            border: 2px solid;
+            background-color: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 14px;
+            font-weight: bold;
+            pointer-events: none; /* Let clicks pass through to canvas if needed */
+            transform: translate(-50%, -50%); /* Center on coordinate */
+        }
+        /* Diplomatic colors */
+        .ally { border-color: #2563eb; color: #2563eb; } /* Blue */
+        .enemy { border-color: #dc2626; color: #dc2626; } /* Red */
+        .neutral { border-color: #16a34a; color: #16a34a; } /* Green */
+        .unknown { border-color: #fbbf24; color: #d97706; } /* Yellow/Orange */
+        
+        .log-entry { margin-bottom: 4px; font-family: monospace; font-size: 0.9em; }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col">
+
+    <header class="bg-slate-800 text-white p-3 flex justify-between items-center shrink-0 z-10 shadow-md">
+        <h1 class="text-xl font-bold">Tactical Map Engine</h1>
+        <div class="flex gap-4 items-center">
+            <input type="file" id="map-upload" accept="image/*" class="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-slate-700 file:text-white hover:file:bg-slate-600 cursor-pointer">
+            
+            <div class="flex items-center gap-2 border-l border-slate-600 pl-4">
+                <label class="text-sm">Mode:</label>
+                <select id="interaction-mode" class="bg-slate-700 text-white rounded px-2 py-1 text-sm border-none focus:ring-2 focus:ring-blue-500">
+                    <option value="territory">塗る (領土)</option>
+                    <option value="unit">配置 (部隊)</option>
+                    <option value="view">閲覧 (移動)</option>
+                </select>
+            </div>
+            
+            <div id="territory-controls" class="flex items-center gap-2 border-l border-slate-600 pl-4">
+                <input type="text" id="country-name" placeholder="国名" class="bg-slate-700 text-white rounded px-2 py-1 w-24 text-sm border-none">
+                <select id="diplo-status" class="bg-slate-700 text-white rounded px-2 py-1 text-sm border-none">
+                    <option value="ally">味方 (青)</option>
+                    <option value="enemy">敵 (赤)</option>
+                    <option value="neutral">中立 (緑)</option>
+                    <option value="unknown">不詳 (黄)</option>
+                </select>
+                <input type="number" id="brush-size" value="20" min="5" max="100" class="bg-slate-700 text-white rounded px-2 py-1 w-16 text-sm border-none" title="ブラシサイズ">
+            </div>
+
+            <div id="unit-controls" class="hidden items-center gap-2 border-l border-slate-600 pl-4">
+                <input type="text" id="unit-name" placeholder="部隊ID (例:A1)" class="bg-slate-700 text-white rounded px-2 py-1 w-24 text-sm border-none">
+                <select id="unit-type" class="bg-slate-700 text-white rounded px-2 py-1 text-sm border-none">
+                    <option value="INF">歩兵 (X)</option>
+                    <option value="ARM">機甲 (O)</option>
+                    <option value="ART">砲兵 (・)</option>
+                    <option value="CAV">騎兵 (/)</option>
+                </select>
+                <select id="unit-diplo" class="bg-slate-700 text-white rounded px-2 py-1 text-sm border-none">
+                     <option value="ally">味方</option>
+                    <option value="enemy">敵</option>
+                    <option value="neutral">中立</option>
+                    <option value="unknown">不詳</option>
+                </select>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- Left Sidebar: Intel -->
+        <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 border-r border-slate-700 shadow-xl z-10">
+            <div class="p-4 bg-slate-800 border-b border-slate-700">
+                <h2 class="text-lg font-semibold text-white">Intelligence (Intel)</h2>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4">
+                <h3 class="text-sm font-bold text-slate-400 mb-2 uppercase tracking-wider">Countries / Territories</h3>
+                <ul id="country-list" class="space-y-2 mb-6 text-sm">
+                    <!-- Dynamic country list -->
+                    <li class="text-slate-500 italic">マップをロードしてください</li>
+                </ul>
+
+                <h3 class="text-sm font-bold text-slate-400 mb-2 uppercase tracking-wider">Known Units</h3>
+                <ul id="unit-list" class="space-y-2 text-sm">
+                    <!-- Dynamic unit list -->
+                </ul>
+            </div>
+        </aside>
+
+        <!-- Center: Map Area -->
+        <main class="flex-1 bg-blue-900 relative flex flex-col" id="map-area">
+            <div id="map-container" class="flex-1 w-full h-full relative">
+                <!-- Base Image Canvas -->
+                <canvas id="base-canvas" class="absolute top-0 left-0"></canvas>
+                <!-- Territory Drawing Canvas -->
+                <canvas id="territory-canvas" class="absolute top-0 left-0 opacity-50 mix-blend-multiply"></canvas>
+                <!-- Interaction/Brush Canvas -->
+                <canvas id="interaction-canvas" class="absolute top-0 left-0"></canvas>
+                <!-- Unit Icons Container -->
+                <div id="units-layer" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
+            </div>
+        </main>
+    </div>
+
+    <footer class="h-48 bg-slate-900 text-green-400 shrink-0 border-t border-slate-700 flex flex-col z-10 font-mono text-sm shadow-inner">
+        <!-- Log Area -->
+        <div id="log-container" class="flex-1 overflow-y-auto p-2">
+            <div class="log-entry text-slate-500">System initialized. Awaiting map upload...</div>
+        </div>
+        <!-- Command Input -->
+        <div class="bg-slate-800 p-2 flex border-t border-slate-700">
+            <span class="text-slate-400 mr-2">></span>
+            <input type="text" id="command-input" class="flex-1 bg-transparent border-none outline-none text-green-400 placeholder-slate-600" placeholder="Enter command (e.g., 'move A1 to 150,200')">
+            <button id="btn-execute" class="ml-2 px-4 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition-colors">Execute</button>
+        </div>
+    </footer>
+
+    <script>
+        // DOM Elements
+        const mapUpload = document.getElementById('map-upload');
+        const container = document.getElementById('map-container');
+        
+        const baseCanvas = document.getElementById('base-canvas');
+        const baseCtx = baseCanvas.getContext('2d', { willReadFrequently: true });
+        
+        const territoryCanvas = document.getElementById('territory-canvas');
+        const territoryCtx = territoryCanvas.getContext('2d');
+        
+        const interactionCanvas = document.getElementById('interaction-canvas');
+        const interactionCtx = interactionCanvas.getContext('2d');
+        
+        const unitsLayer = document.getElementById('units-layer');
+        const logContainer = document.getElementById('log-container');
+        const commandInput = document.getElementById('command-input');
+        const btnExecute = document.getElementById('btn-execute');
+        
+        const modeSelect = document.getElementById('interaction-mode');
+        const territoryControls = document.getElementById('territory-controls');
+        const unitControls = document.getElementById('unit-controls');
+        
+        const countryNameInput = document.getElementById('country-name');
+        const diploStatusSelect = document.getElementById('diplo-status');
+        const brushSizeInput = document.getElementById('brush-size');
+        
+        const unitNameInput = document.getElementById('unit-name');
+        const unitTypeSelect = document.getElementById('unit-type');
+        const unitDiploSelect = document.getElementById('unit-diplo');
+        
+        const countryListEl = document.getElementById('country-list');
+        const unitListEl = document.getElementById('unit-list');
+
+        // State
+        let isMapLoaded = false;
+        let mapData = null; // ImageData for collision detection
+        let isDrawing = false;
+        
+        // Data Structures
+        const countries = {}; // { name: { status, color, pixelCount } }
+        const units = {}; // { id: { type, status, x, y, el } }
+        
+        // Configuration
+        const diploColors = {
+            ally: { hex: '#3b82f6', rgb: [59, 130, 246] },
+            enemy: { hex: '#ef4444', rgb: [239, 68, 68] },
+            neutral: { hex: '#22c55e', rgb: [34, 197, 94] },
+            unknown: { hex: '#f59e0b', rgb: [245, 158, 11] }
+        };
+
+        const natoSymbols = {
+            INF: 'X',   // Infantry
+            ARM: 'O',   // Armor
+            ART: '•',   // Artillery
+            CAV: '/'    // Cavalry/Recon
+        };
+
+        // Utility: Logging
+        function logAction(msg, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const time = new Date().toLocaleTimeString();
+            let colorStr = '';
+            if(type === 'error') colorStr = 'text-red-400';
+            else if(type === 'success') colorStr = 'text-green-300';
+            else if(type === 'warn') colorStr = 'text-yellow-400';
+            
+            entry.innerHTML = `<span class="text-slate-500">[${time}]</span> <span class="${colorStr}">${msg}</span>`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // Map Upload & Processing
+        mapUpload.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    setupMap(img);
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        function setupMap(img) {
+            // Set canvas dimensions
+            const w = img.width;
+            const h = img.height;
+            
+            baseCanvas.width = w; baseCanvas.height = h;
+            territoryCanvas.width = w; territoryCanvas.height = h;
+            interactionCanvas.width = w; interactionCanvas.height = h;
+            
+            // Draw original image to an offscreen canvas to analyze
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w; tempCanvas.height = h;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(img, 0, 0);
+            
+            const imgData = tempCtx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+            
+            // Create the Base Map: Land (white in original) vs Sea (non-white)
+            const processedData = baseCtx.createImageData(w, h);
+            const pData = processedData.data;
+            
+            // Sea color: #1e3a8a (Tailwind blue-900)
+            const seaR = 30, seaG = 58, seaB = 138;
+            // Land color: #f8fafc (Tailwind slate-50)
+            const landR = 248, landG = 250, landB = 252;
+            
+            const tolerance = 240; // R,G,B must be > this to be considered white/land
+
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i+1];
+                const b = data[i+2];
+                // Check if pixel is close to white
+                if (r > tolerance && g > tolerance && b > tolerance) {
+                    // It's Land
+                    pData[i] = landR; pData[i+1] = landG; pData[i+2] = landB; pData[i+3] = 255;
+                } else {
+                    // It's Sea
+                    pData[i] = seaR; pData[i+1] = seaG; pData[i+2] = seaB; pData[i+3] = 255;
+                }
+            }
+            
+            baseCtx.putImageData(processedData, 0, 0);
+            mapData = baseCtx.getImageData(0, 0, w, h); // Cache for collision
+            isMapLoaded = true;
+            
+            logAction(`Map loaded successfully. Resolution: ${w}x${h}`, 'success');
+            
+            // Reset state
+            territoryCtx.clearRect(0, 0, w, h);
+            unitsLayer.innerHTML = '';
+            for (let key in countries) delete countries[key];
+            for (let key in units) delete units[key];
+            updateIntelPanel();
+        }
+
+        // Utility: Check if coordinate is Land
+        function isLand(x, y) {
+            if (!isMapLoaded || !mapData) return false;
+            // Round coordinates
+            x = Math.floor(x);
+            y = Math.floor(y);
+            if(x < 0 || x >= mapData.width || y < 0 || y >= mapData.height) return false;
+            
+            const index = (y * mapData.width + x) * 4;
+            const r = mapData.data[index];
+            // Based on our processed map, land is slate-50 (R:248)
+            return r > 200; 
+        }
+
+        // UI Mode Switching
+        modeSelect.addEventListener('change', (e) => {
+            const mode = e.target.value;
+            territoryControls.classList.add('hidden');
+            unitControls.classList.add('hidden');
+            
+            if (mode === 'territory') territoryControls.classList.remove('hidden');
+            if (mode === 'unit') unitControls.classList.remove('hidden');
+            
+            interactionCtx.clearRect(0, 0, interactionCanvas.width, interactionCanvas.height);
+        });
+
+        // Territory Drawing Mechanics
+        function getMousePos(canvas, evt) {
+            const rect = canvas.getBoundingClientRect();
+            // Calculate scale based on actual size vs styled size
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (evt.clientX - rect.left) * scaleX,
+                y: (evt.clientY - rect.top) * scaleY
+            };
+        }
+
+        interactionCanvas.addEventListener('mousedown', (e) => {
+            if (!isMapLoaded) return;
+            const pos = getMousePos(interactionCanvas, e);
+            const mode = modeSelect.value;
+            
+            if (mode === 'territory') {
+                isDrawing = true;
+                paintTerritory(pos.x, pos.y);
+            } else if (mode === 'unit') {
+                placeUnit(pos.x, pos.y);
+            }
+        });
+
+        interactionCanvas.addEventListener('mousemove', (e) => {
+            if (!isMapLoaded) return;
+            const pos = getMousePos(interactionCanvas, e);
+            const mode = modeSelect.value;
+            
+            // Draw Brush Preview
+            interactionCtx.clearRect(0, 0, interactionCanvas.width, interactionCanvas.height);
+            
+            if (mode === 'territory') {
+                const brushSize = parseInt(brushSizeInput.value);
+                const status = diploStatusSelect.value;
+                const color = diploColors[status].hex;
+                
+                interactionCtx.beginPath();
+                interactionCtx.arc(pos.x, pos.y, brushSize/2, 0, Math.PI * 2);
+                interactionCtx.strokeStyle = color;
+                interactionCtx.lineWidth = 2;
+                interactionCtx.stroke();
+                
+                if (isDrawing) {
+                    paintTerritory(pos.x, pos.y);
+                }
+            } else if (mode === 'unit') {
+                // Crosshair preview
+                interactionCtx.beginPath();
+                interactionCtx.moveTo(pos.x - 10, pos.y);
+                interactionCtx.lineTo(pos.x + 10, pos.y);
+                interactionCtx.moveTo(pos.x, pos.y - 10);
+                interactionCtx.lineTo(pos.x, pos.y + 10);
+                interactionCtx.strokeStyle = 'white';
+                interactionCtx.stroke();
+                
+                if(!isLand(pos.x, pos.y)) {
+                    interactionCtx.fillStyle = 'rgba(255,0,0,0.5)';
+                    interactionCtx.font = '12px sans-serif';
+                    interactionCtx.fillText("Sea - Cannot deploy", pos.x + 15, pos.y - 15);
+                }
+            }
+        });
+
+        interactionCanvas.addEventListener('mouseup', () => { isDrawing = false; });
+        interactionCanvas.addEventListener('mouseleave', () => { 
+            isDrawing = false;
+            interactionCtx.clearRect(0, 0, interactionCanvas.width, interactionCanvas.height);
+        });
+
+        function paintTerritory(cx, cy) {
+            const cName = countryNameInput.value.trim() || 'Unknown';
+            const status = diploStatusSelect.value;
+            const radius = parseInt(brushSizeInput.value) / 2;
+            const colorRgb = diploColors[status].rgb;
+            
+            // We need to paint on territoryCanvas, but ONLY where baseCanvas is land.
+            // A simple approach is pixel manipulation within the bounding box of the brush.
+            const minX = Math.max(0, Math.floor(cx - radius));
+            const minY = Math.max(0, Math.floor(cy - radius));
+            const maxX = Math.min(territoryCanvas.width, Math.ceil(cx + radius));
+            const maxY = Math.min(territoryCanvas.height, Math.ceil(cy + radius));
+            
+            const w = maxX - minX;
+            const h = maxY - minY;
+            if(w <= 0 || h <= 0) return;
+
+            const tData = territoryCtx.getImageData(minX, minY, w, h);
+            const data = tData.data;
+            
+            let paintedPixels = 0;
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const absX = minX + x;
+                    const absY = minY + y;
+                    
+                    // Check if within circle radius
+                    const dx = absX - cx;
+                    const dy = absY - cy;
+                    if (dx*dx + dy*dy <= radius*radius) {
+                        // Check if it's land
+                        if (isLand(absX, absY)) {
+                            const idx = (y * w + x) * 4;
+                            data[idx] = colorRgb[0];
+                            data[idx+1] = colorRgb[1];
+                            data[idx+2] = colorRgb[2];
+                            data[idx+3] = 255; // Alpha
+                            paintedPixels++;
+                        }
+                    }
+                }
+            }
+            
+            territoryCtx.putImageData(tData, minX, minY);
+            
+            // Update Intel
+            if (!countries[cName]) {
+                countries[cName] = { status: status, color: diploColors[status].hex, pixels: 0 };
+                logAction(`New territory established: ${cName} [${status}]`, 'success');
+            } else if (countries[cName].status !== status) {
+                 // Update status if changed
+                 countries[cName].status = status;
+                 countries[cName].color = diploColors[status].hex;
+            }
+            countries[cName].pixels += paintedPixels;
+            
+            // Debounce the intel update slightly to avoid heavy DOM ops while drawing
+            clearTimeout(window.intelUpdateTimer);
+            window.intelUpdateTimer = setTimeout(updateIntelPanel, 500);
+        }
+
+        // Unit Management
+        function placeUnit(x, y) {
+            if (!isLand(x, y)) {
+                logAction("Cannot deploy units at sea.", "error");
+                return;
+            }
+
+            const id = unitNameInput.value.trim();
+            if (!id) {
+                logAction("Unit ID is required.", "error");
+                return;
+            }
+            if (units[id]) {
+                logAction(`Unit ID '${id}' already exists. Use move command instead.`, "warn");
+                return;
+            }
+
+            const type = unitTypeSelect.value;
+            const status = unitDiploSelect.value;
+            
+            createUnitElement(id, type, status, x, y);
+            logAction(`Deployed Unit ${id} (${type}) at [${Math.floor(x)}, ${Math.floor(y)}]`, 'success');
+            updateIntelPanel();
+        }
+
+        function createUnitElement(id, type, status, x, y) {
+            const el = document.createElement('div');
+            el.className = `nato-icon ${status}`;
+            el.innerText = natoSymbols[type] || 'X';
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
+            el.title = `Unit: ${id}\nType: ${type}\nStatus: ${status}`;
+            
+            unitsLayer.appendChild(el);
+            
+            units[id] = { id, type, status, x, y, el };
+        }
+
+        function updateIntelPanel() {
+            // Update Countries
+            countryListEl.innerHTML = '';
+            const cNames = Object.keys(countries);
+            if (cNames.length === 0) {
+                countryListEl.innerHTML = '<li class="text-slate-500 italic">No territories established.</li>';
+            } else {
+                cNames.forEach(name => {
+                    const c = countries[name];
+                    const li = document.createElement('li');
+                    li.className = 'flex items-center justify-between';
+                    li.innerHTML = `
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded-full" style="background-color: ${c.color}"></span>
+                            <span class="font-medium">${name}</span>
+                        </div>
+                        <span class="text-xs text-slate-400 capitalize">${c.status}</span>
+                    `;
+                    countryListEl.appendChild(li);
+                });
+            }
+
+            // Update Units
+            unitListEl.innerHTML = '';
+            const uIDs = Object.keys(units);
+            if (uIDs.length === 0) {
+                unitListEl.innerHTML = '<li class="text-slate-500 italic">No known units.</li>';
+            } else {
+                uIDs.forEach(id => {
+                    const u = units[id];
+                    const li = document.createElement('li');
+                    li.className = 'flex items-center justify-between';
+                    li.innerHTML = `
+                        <div class="flex items-center gap-2">
+                            <div class="w-6 h-4 border border-current flex items-center justify-center text-[10px] ${u.status}">${natoSymbols[u.type]}</div>
+                            <span class="font-medium">${id}</span>
+                        </div>
+                        <span class="text-xs text-slate-400 font-mono">[${Math.floor(u.x)},${Math.floor(u.y)}]</span>
+                    `;
+                    unitListEl.appendChild(li);
+                });
+            }
+        }
+
+        // Text Command Parser
+        commandInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                executeCommand(this.value);
+                this.value = '';
+            }
+        });
+
+        btnExecute.addEventListener('click', () => {
+            executeCommand(commandInput.value);
+            commandInput.value = '';
+        });
+
+        function executeCommand(cmdStr) {
+            const cmd = cmdStr.trim();
+            if(!cmd) return;
+            
+            logAction(`> ${cmd}`);
+            
+            // Expected format: move [UnitID] to [x],[y]
+            const moveRegex = /^move\s+([a-zA-Z0-9_-]+)\s+to\s+(\d+)\s*,\s*(\d+)$/i;
+            const match = cmd.match(moveRegex);
+
+            if (match) {
+                const id = match[1];
+                const targetX = parseInt(match[2]);
+                const targetY = parseInt(match[3]);
+                
+                moveUnit(id, targetX, targetY);
+            } else {
+                logAction("Unknown command. Try: 'move [ID] to [x],[y]'", "error");
+            }
+        }
+
+        function moveUnit(id, tx, ty) {
+            const unit = units[id];
+            if (!unit) {
+                logAction(`Unit '${id}' not found.`, "error");
+                return;
+            }
+            if (!isMapLoaded) return;
+            
+            // Check boundaries
+            if (tx < 0 || tx >= baseCanvas.width || ty < 0 || ty >= baseCanvas.height) {
+                 logAction(`Target coordinate [${tx},${ty}] is out of bounds.`, "error");
+                 return;
+            }
+
+            // Check if target is land
+            if (!isLand(tx, ty)) {
+                logAction(`Cannot move ${id} to [${tx},${ty}]: Target is Sea.`, "error");
+                return;
+            }
+            
+            // Perform Move (Instant for now, could be animated)
+            unit.x = tx;
+            unit.y = ty;
+            unit.el.style.left = `${tx}px`;
+            unit.el.style.top = `${ty}px`;
+            
+            logAction(`Unit ${id} moved to [${tx}, ${ty}]`, "success");
+            updateIntelPanel();
+        }
+
+    </script>
+</body>
+</html>
