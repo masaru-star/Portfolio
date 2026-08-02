@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Naval Battle Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Inter', sans-serif; user-select: none; }
+        #three-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; pointer-events: none; }
+        .pointer-events-auto { pointer-events: auto; }
+        
+        /* Custom Scrollbar for UI */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+        .hp-bar-container {
+            position: absolute; width: 48px; height: 6px; background-color: rgba(0,0,0,0.8);
+            border: 1px solid #111; transform: translate(-50%, -50%); pointer-events: none;
+        }
+        .hp-bar-fill { height: 100%; width: 100%; transition: width 0.1s; }
+
+        #escape-bar-container {
+            display: none; position: absolute; top: 100px; left: 50%; transform: translateX(-50%);
+            width: 250px; height: 12px; background-color: rgba(0,0,0,0.8); border: 1px solid #fff; z-index: 20; border-radius: 6px; overflow: hidden;
+        }
+        #escape-bar-fill { height: 100%; width: 0%; background-color: #fbbf24; }
+    </style>
+</head>
+<body>
+    <!-- 3D Canvas -->
+    <canvas id="three-canvas"></canvas>
+
+    <!-- UI Layer -->
+    <div id="ui-layer">
+        
+        <!-- Port UI -->
+        <div id="port-ui" class="pointer-events-auto absolute left-0 top-0 h-full w-full sm:w-[420px] bg-slate-900 bg-opacity-95 text-white p-6 shadow-2xl border-r border-slate-700 overflow-y-auto backdrop-blur-sm transition-transform duration-300">
+            <h1 class="text-3xl font-black mb-1 text-blue-400 tracking-wider">NAVAL COMMAND</h1>
+            <p class="text-xs text-gray-400 mb-6 uppercase tracking-widest">Home Port / Dockyard</p>
+            
+            <div class="flex justify-between items-end mb-6 bg-slate-800 p-4 rounded-lg border border-slate-700">
+                <span class="text-gray-300">Credits</span>
+                <span class="text-2xl font-bold text-yellow-400 font-mono"><span id="credits-val">2500</span> <span class="text-sm">G</span></span>
+            </div>
+
+            <!-- Save/Load Section -->
+            <div class="flex space-x-2 mb-6">
+                <button id="btn-export" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded text-sm transition-colors border border-slate-600">Export Save</button>
+                <button id="btn-import" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded text-sm transition-colors border border-slate-600">Import Save</button>
+                <input type="file" id="import-file" class="hidden" accept=".gz">
+            </div>
+
+            <!-- Build Section -->
+            <div class="mb-6">
+                <h2 class="text-sm uppercase tracking-widest text-gray-400 border-b border-slate-700 pb-2 mb-3">Shipyard</h2>
+                <div class="space-y-3">
+                    <select id="build-type" class="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded focus:outline-none focus:border-blue-500"></select>
+                    <input type="text" id="build-name" placeholder="Enter Ship Name" class="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded focus:outline-none focus:border-blue-500">
+                    <button id="btn-build" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded transition-colors shadow-lg active:scale-95 uppercase tracking-wide">
+                        Construct Ship
+                    </button>
+                </div>
+            </div>
+
+            <!-- Global Port Message Area -->
+            <div id="port-msg-area" class="mb-2 text-center h-5 transition-opacity"></div>
+
+            <!-- Fleet Management Section -->
+            <div class="mb-6">
+                <h2 class="text-sm uppercase tracking-widest text-gray-400 border-b border-slate-700 pb-2 mb-3 flex justify-between">
+                    <span>Active Fleet</span>
+                    <span id="fleet-count" class="text-green-400">0 / 4</span>
+                </h2>
+                <div id="ship-list" class="space-y-2 max-h-72 overflow-y-auto pr-2">
+                    <!-- Ship items will be injected here -->
+                </div>
+            </div>
+
+            <!-- Sortie Button -->
+            <button id="btn-sortie" class="w-full bg-red-600 hover:bg-red-500 disabled:bg-slate-700 disabled:text-gray-500 text-white font-black text-xl py-4 rounded transition-colors shadow-[0_0_15px_rgba(220,38,38,0.5)] active:scale-95 uppercase tracking-widest mt-auto">
+                Sortie (Deploy)
+            </button>
+        </div>
+
+        <!-- Battle UI -->
+        <div id="battle-ui" class="hidden absolute inset-0">
+            <!-- Controls Guide -->
+            <div class="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-gray-200 px-6 py-3 rounded-lg text-sm text-center border border-slate-700 backdrop-blur-md">
+                <div class="flex space-x-4 justify-center font-mono">
+                    <span>[WASD] Move Ship</span>
+                    <span class="text-blue-300">[1-4] Switch Ship</span>
+                    <span>[TAP/CLICK] Fire</span>
+                    <span class="text-yellow-400">[Hold E] Escape</span>
+                </div>
+                <div id="battle-msg" class="text-yellow-400 font-bold text-lg mt-2 tracking-wide">ENGAGE THE ENEMY</div>
+            </div>
+
+            <!-- Escape Bar -->
+            <div id="escape-bar-container">
+                <div id="escape-bar-fill"></div>
+            </div>
+            <div id="escape-text" class="hidden absolute top-[115px] left-1/2 transform -translate-x-1/2 text-xs text-white drop-shadow-md z-20">ESCAPING...</div>
+
+            <!-- Return Button (Hidden initially during battle) -->
+            <div id="battle-result" class="hidden absolute inset-0 flex items-center justify-center bg-black bg-opacity-80 backdrop-blur-sm pointer-events-auto z-50">
+                <div class="text-center p-8 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl">
+                    <h2 id="result-title" class="text-5xl font-black mb-4">VICTORY</h2>
+                    <p id="result-desc" class="text-xl text-gray-300 mb-8">Reward: +1000 G</p>
+                    <button id="btn-return" class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded text-white font-bold text-xl uppercase tracking-wider transition-colors active:scale-95">
+                        Return to Port
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- HP Bars Layer -->
+        <div id="hp-layer" class="absolute inset-0 overflow-hidden pointer-events-none z-0"></div>
+    </div>
+
+    <script>
+        // --- Game Configuration & Data ---
+        
+        const SHIP_TYPES = {
+            Destroyer: { name: "駆逐艦 (Destroyer)", cost: 500, speed: 30, accel: 15, range: 180, hp: 100, weapons: ['main_gun', 'torpedo'], color: 0x88aaff, size: [2, 1, 8], turnSpeed: 1.5 },
+            Submarine: { name: "潜水艦 (Submarine)", cost: 800, speed: 20, accel: 10, range: 250, hp: 80, weapons: ['torpedo'], color: 0x1a2b3c, size: [1.2, 0.4, 6], turnSpeed: 1.0 },
+            Cruiser: { name: "巡洋艦 (Cruiser)", cost: 600, speed: 25, accel: 12, range: 280, hp: 160, weapons: ['main_gun', 'aa_gun'], color: 0x999999, size: [2.5, 1.5, 10], turnSpeed: 1.2 },
+            Carrier: { name: "航空母艦 (Carrier)", cost: 1200, speed: 18, accel: 8, range: 600, hp: 200, weapons: ['aircraft'], color: 0x6b7280, size: [4, 1.2, 14], turnSpeed: 0.8 },
+            Battleship: { name: "戦艦 (Battleship)", cost: 1500, speed: 12, accel: 5, range: 450, hp: 350, weapons: ['main_gun', 'sub_gun'], color: 0x4b5563, size: [4, 2, 16], turnSpeed: 0.6 }
+        };
+
+        const WEAPONS = {
+            main_gun: { damage: 25, reload: 2.5, type: 'parabola', speed: 120, color: 0xffdd00, size: 0.6, splash: 15 },
+            sub_gun: { damage: 10, reload: 1.2, type: 'parabola', speed: 100, color: 0xffaa00, size: 0.4, splash: 10 },
+            torpedo: { damage: 70, reload: 7.0, type: 'straight', speed: 40, color: 0x00ffff, size: 0.8, splash: 20 },
+            aa_gun: { damage: 8, reload: 0.6, type: 'direct', speed: 250, color: 0xffffff, size: 0.3, splash: 8 },
+            aircraft: { damage: 50, reload: 9.0, type: 'air', speed: 80, color: 0x111111, size: 1.5, splash: 25 }
+        };
+
+        // --- State Variables ---
+        let gameState = 'port'; // 'port' or 'battle'
+        let credits = 2500;
+        let shipIdCounter = 1;
+        let myShips = [];
+        let fleetIds = [];
+        
+        let activeShips = [];
+        let projectiles = [];
+        let explosions = [];
+
+        let battleEarnedCredits = 0;
+        let escapeTimer = 0;
+        let controlledShipIndex = 0; // 0~3 for active fleet
+
+        // Input state
+        const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, w: false, a: false, s: false, d: false, e: false };
+
+        // Three.js Globals
+        let scene, camera, renderer, seaPlane;
+        let portTime = 0;
+        let clock = new THREE.Clock();
+
+        // --- Initialization ---
+        function init() {
+            // Setup Three.js
+            const canvas = document.getElementById('three-canvas');
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.FogExp2(0x87CEEB, 0.002);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 2000);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambientLight);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(100, 200, 50);
+            scene.add(dirLight);
+
+            // Sea Plane
+            const seaGeo = new THREE.PlaneGeometry(4000, 4000);
+            const seaMat = new THREE.MeshStandardMaterial({ 
+                color: 0x0a3b59, 
+                transparent: true, 
+                opacity: 0.85,
+                roughness: 0.2,
+                metalness: 0.1
+            });
+            seaPlane = new THREE.Mesh(seaGeo, seaMat);
+            seaPlane.rotation.x = -Math.PI / 2;
+            scene.add(seaPlane);
+
+            // Initialize UI Options
+            const buildSelect = document.getElementById('build-type');
+            for (const [key, data] of Object.entries(SHIP_TYPES)) {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = `${data.name} - ${data.cost}G`;
+                buildSelect.appendChild(option);
+            }
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            setupInput();
+            setupUIEvents();
+
+            // Initial UI update
+            updatePortUI();
+
+            // Start Loop
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function showPortMessage(msg, isError = false) {
+            const msgEl = document.getElementById('port-msg-area');
+            msgEl.textContent = msg;
+            msgEl.className = `mb-2 text-center h-5 text-sm font-bold ${isError ? 'text-red-400' : 'text-green-400'}`;
+            clearTimeout(msgEl.timeoutId);
+            msgEl.timeoutId = setTimeout(() => { msgEl.textContent = ""; }, 3000);
+        }
+
+        function setupUIEvents() {
+            document.getElementById('btn-build').addEventListener('click', () => {
+                const type = document.getElementById('build-type').value;
+                const nameInput = document.getElementById('build-name');
+                let name = nameInput.value.trim();
+                const data = SHIP_TYPES[type];
+
+                if (credits < data.cost) {
+                    showPortMessage("Not enough credits!", true);
+                    return;
+                }
+                if (!name) {
+                    name = type + " " + shipIdCounter;
+                }
+
+                credits -= data.cost;
+                myShips.push({ 
+                    id: shipIdCounter++, 
+                    type: type, 
+                    name: name, 
+                    hp: data.hp, 
+                    maxHp: data.hp,
+                    level: 1,
+                    maxLevel: 20, // Default Max Level
+                    exp: 0
+                });
+                nameInput.value = "";
+                showPortMessage("Ship constructed successfully!");
+                
+                updatePortUI();
+            });
+
+            document.getElementById('btn-sortie').addEventListener('click', startBattle);
+
+            document.getElementById('btn-return').addEventListener('click', () => {
+                gameState = 'port';
+                document.getElementById('battle-ui').classList.add('hidden');
+                document.getElementById('battle-result').classList.add('hidden');
+                document.getElementById('port-ui').style.transform = 'translateX(0)';
+                document.getElementById('hp-layer').innerHTML = ''; // Clear HP bars
+                clearBattleScene();
+                updatePortUI();
+            });
+
+            // Save Data Export
+            document.getElementById('btn-export').addEventListener('click', () => {
+                try {
+                    const saveObj = { credits, shipIdCounter, myShips, fleetIds };
+                    const jsonString = JSON.stringify(saveObj);
+                    const compressed = pako.gzip(jsonString);
+                    const blob = new Blob([compressed], { type: 'application/gzip' });
+                    const url = URL.createObjectURL(blob);
+                    
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'naval_fleet_data.gz';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                } catch (e) {
+                    showPortMessage("Export Failed: " + e.message, true);
+                }
+            });
+
+            // Save Data Import
+            document.getElementById('btn-import').addEventListener('click', () => {
+                document.getElementById('import-file').click();
+            });
+
+            document.getElementById('import-file').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const arrayBuffer = event.target.result;
+                        const decompressed = pako.ungzip(new Uint8Array(arrayBuffer), { to: 'string' });
+                        const data = JSON.parse(decompressed);
+                        
+                        credits = data.credits || 0;
+                        shipIdCounter = data.shipIdCounter || 1;
+                        myShips = data.myShips || [];
+                        fleetIds = data.fleetIds || [];
+                        
+                        // Retrofit for old save formats missing level/exp/maxLevel
+                        myShips.forEach(ship => {
+                            if (ship.level === undefined) ship.level = 1;
+                            if (ship.exp === undefined) ship.exp = 0;
+                            if (ship.maxLevel === undefined) ship.maxLevel = 20;
+                        });
+                        
+                        updatePortUI();
+                        showPortMessage("Save imported successfully!");
+                        document.getElementById('import-file').value = ""; // Reset
+                    } catch (err) {
+                        showPortMessage("Import Failed. The file might be corrupted.", true);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        function toggleFleet(id) {
+            const index = fleetIds.indexOf(id);
+            if (index > -1) {
+                fleetIds.splice(index, 1);
+            } else {
+                if (fleetIds.length < 4) {
+                    fleetIds.push(id);
+                }
+            }
+            updatePortUI();
+        }
+
+        window.unlockLevelLimit = function(id) {
+            const ship = myShips.find(s => s.id === id);
+            if (!ship) return;
+            
+            if (credits < 400) {
+                showPortMessage("Not enough credits for limit break!", true);
+                return;
+            }
+            
+            credits -= 400;
+            ship.maxLevel = (ship.maxLevel || 20) + 10;
+            ship.exp = 0; // Reset EXP for next level up
+            
+            showPortMessage("Level limit increased by +10!");
+            updatePortUI();
+        }
+
+        function updatePortUI() {
+            document.getElementById('credits-val').textContent = credits;
+            const listEl = document.getElementById('ship-list');
+            listEl.innerHTML = '';
+            
+            myShips.forEach(ship => {
+                const isFleet = fleetIds.includes(ship.id);
+                const typeData = SHIP_TYPES[ship.type];
+                
+                const levelMod = 1 + (ship.level - 1) * 0.05;
+                const maxLevel = ship.maxLevel || 20;
+                const isMaxLevel = ship.level >= maxLevel;
+                const reqExp = ship.level * 100;
+                const expPct = isMaxLevel ? 100 : Math.min(100, (ship.exp / reqExp) * 100);
+                
+                const div = document.createElement('div');
+                div.className = `flex justify-between items-center p-3 rounded-lg border ${isFleet ? 'bg-slate-700 border-blue-500' : 'bg-slate-800 border-slate-600'}`;
+                div.innerHTML = `
+                    <div class="flex flex-col w-full pr-2">
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-blue-300">${ship.name} <span class="text-yellow-400 text-xs ml-1">Lv.${ship.level}/${maxLevel}</span></span>
+                        </div>
+                        <span class="text-xs text-gray-400">${typeData.name} | Rng: ${Math.floor(typeData.range * levelMod)} | HP: ${Math.floor(ship.maxHp * levelMod)}</span>
+                        <!-- EXP Bar -->
+                        <div class="w-full bg-slate-900 h-1.5 mt-1.5 rounded-full overflow-hidden relative">
+                            <div class="bg-blue-400 h-full transition-all duration-300" style="width: ${expPct}%"></div>
+                            ${isMaxLevel ? '<span class="absolute inset-0 text-[8px] flex items-center justify-center text-white font-bold leading-none shadow-black">MAX</span>' : ''}
+                        </div>
+                    </div>
+                    <div class="flex flex-col space-y-2 ml-2 shrink-0">
+                        <button class="w-[70px] py-1 text-xs font-bold rounded transition-colors ${isFleet ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}" onclick="toggleFleet(${ship.id})">
+                            ${isFleet ? 'REMOVE' : 'ADD'}
+                        </button>
+                        ${isMaxLevel ? `<button class="w-[70px] py-1 text-[10px] font-bold rounded transition-colors bg-purple-600 hover:bg-purple-500 text-white" onclick="unlockLevelLimit(${ship.id})">+Lv(400G)</button>` : ''}
+                    </div>
+                `;
+                listEl.appendChild(div);
+            });
+
+            document.getElementById('fleet-count').textContent = `${fleetIds.length} / 4`;
+            document.getElementById('btn-sortie').disabled = fleetIds.length === 0;
+        }
+
+        function showBattleMessage(msg) {
+            const el = document.getElementById('battle-msg');
+            el.textContent = msg;
+            clearTimeout(el.timeoutId);
+            el.timeoutId = setTimeout(() => {
+                el.textContent = "ENGAGE THE ENEMY";
+            }, 2000);
+        }
+
+        function setupInput() {
+            window.addEventListener('keydown', (e) => {
+                if(keys.hasOwnProperty(e.key)) keys[e.key] = true;
+                if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true;
+                
+                // Ship switching logic using number keys (1, 2, 3, 4)
+                if (gameState === 'battle' && ['1', '2', '3', '4'].includes(e.key)) {
+                    const targetIndex = parseInt(e.key) - 1;
+                    const targetShip = activeShips.find(s => !s.isEnemy && s.fleetIndex === targetIndex && s.hp > 0);
+                    if (targetShip) {
+                        controlledShipIndex = targetIndex;
+                        showBattleMessage(`CONTROL SWITCHED TO: ${targetShip.name.toUpperCase()}`);
+                    }
+                }
+            });
+            
+            window.addEventListener('keyup', (e) => {
+                if(keys.hasOwnProperty(e.key)) keys[e.key] = false;
+                if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false;
+            });
+
+            // Tap/Click for firing
+            const canvas = document.getElementById('three-canvas');
+            canvas.addEventListener('pointerdown', (e) => {
+                if (gameState !== 'battle') return;
+                
+                // Prevent firing if result screen is up
+                if (!document.getElementById('battle-result').classList.contains('hidden')) return;
+
+                const rect = canvas.getBoundingClientRect();
+                const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+                const intersects = raycaster.intersectObject(seaPlane);
+                
+                if (intersects.length > 0) {
+                    const targetPos = intersects[0].point;
+                    const friendlies = activeShips.filter(s => !s.isEnemy && s.hp > 0);
+                    friendlies.forEach(ship => ship.fireAt(targetPos));
+                    
+                    // Visual marker for target
+                    createTargetMarker(targetPos);
+                }
+            });
+        }
+
+        function createTargetMarker(pos) {
+            const geo = new THREE.RingGeometry(2, 3, 16);
+            geo.rotateX(-Math.PI/2);
+            const mat = new THREE.MeshBasicMaterial({color: 0xff0000, side: THREE.DoubleSide});
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.copy(pos);
+            mesh.position.y = 0.5;
+            scene.add(mesh);
+            setTimeout(() => scene.remove(mesh), 500);
+        }
+
+        // --- 3D Objects & Classes ---
+        
+        function createShipMesh(typeData, isEnemy) {
+            const group = new THREE.Group();
+            // Darker/reddish tint for enemies
+            const baseColor = isEnemy ? new THREE.Color(typeData.color).lerp(new THREE.Color(0xff0000), 0.3) : typeData.color;
+            
+            // Main Hull
+            const hullGeo = new THREE.BoxGeometry(typeData.size[0], typeData.size[1], typeData.size[2]);
+            const hullMat = new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.6 });
+            const hull = new THREE.Mesh(hullGeo, hullMat);
+            hull.position.y = typeData.size[1] / 2;
+            
+            if (typeData.name.includes("Submarine")) hull.position.y -= typeData.size[1] * 0.4;
+            group.add(hull);
+            
+            // Bridge/Superstructure
+            if (!typeData.name.includes("Carrier") && !typeData.name.includes("Submarine")) {
+                const bridgeGeo = new THREE.BoxGeometry(typeData.size[0]*0.6, typeData.size[1]*1.2, typeData.size[2]*0.25);
+                const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x888888 });
+                const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
+                bridge.position.y = typeData.size[1] * 1.5;
+                bridge.position.z = -typeData.size[2] * 0.1;
+                group.add(bridge);
+            }
+            
+            // Carrier Deck lines
+            if (typeData.name.includes("Carrier")) {
+                const deckGeo = new THREE.PlaneGeometry(typeData.size[0]*0.8, typeData.size[2]*0.9);
+                const deckMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+                const deck = new THREE.Mesh(deckGeo, deckMat);
+                deck.rotation.x = -Math.PI/2;
+                deck.position.y = typeData.size[1] + 0.01;
+                group.add(deck);
+            }
+
+            // Direction indicator (bow)
+            const bowGeo = new THREE.ConeGeometry(typeData.size[0]/2, typeData.size[0], 4);
+            const bowMat = new THREE.MeshStandardMaterial({ color: baseColor });
+            const bow = new THREE.Mesh(bowGeo, bowMat);
+            bow.rotation.x = Math.PI/2;
+            bow.rotation.y = Math.PI/4; // Diamond shape
+            bow.position.z = typeData.size[2]/2 + typeData.size[0]/2;
+            bow.position.y = typeData.size[1]/2;
+            if (typeData.name.includes("Submarine")) bow.position.y -= typeData.size[1] * 0.4;
+            group.add(bow);
+
+            return group;
+        }
+
+        class Ship {
+            constructor(data, typeData, isEnemy) {
+                this.id = data.id || Math.random();
+                this.name = data.name;
+                this.typeData = typeData;
+                this.isEnemy = isEnemy;
+                this.dataRef = data; // Reference to update exp/level in myShips
+                
+                this.level = data.level || 1;
+                const statMod = 1 + (this.level - 1) * 0.05; // +5% per level
+
+                this.maxHp = data.maxHp * statMod;
+                this.hp = isEnemy ? this.maxHp : (data.hp * statMod);
+                if (!isEnemy) this.hp = this.maxHp; // Refill HP on start
+                
+                this.speed = 0; // Current speed
+                this.maxSpeed = typeData.speed;
+                this.accel = typeData.accel;
+                this.turnSpeed = typeData.turnSpeed;
+                this.range = typeData.range * statMod;
+                this.fleetIndex = 0; // Assigned later during deployment
+                
+                this.weapons = typeData.weapons;
+                this.weaponTimers = {};
+                this.weapons.forEach(w => this.weaponTimers[w] = 0);
+                
+                this.mesh = createShipMesh(typeData, isEnemy);
+                scene.add(this.mesh);
+                
+                this.createHpBar();
+            }
+
+            addExp(amount) {
+                if (this.isEnemy || !this.dataRef) return;
+                
+                const maxLevel = this.dataRef.maxLevel || 20;
+                
+                // Block exp gain if at cap
+                if (this.dataRef.level >= maxLevel) {
+                    this.dataRef.exp = maxLevel * 100;
+                    return; 
+                }
+
+                this.dataRef.exp += amount;
+                
+                let reqExp = this.dataRef.level * 100;
+                while (this.dataRef.exp >= reqExp && this.dataRef.level < maxLevel) {
+                    this.dataRef.exp -= reqExp;
+                    this.dataRef.level += 1;
+                    this.level = this.dataRef.level;
+                    
+                    createMuzzleFlash(this.mesh.position); // Level up effect
+                    
+                    if (this.dataRef.level >= maxLevel) {
+                        this.dataRef.exp = maxLevel * 100; // Cap visual representation
+                        break;
+                    }
+                    reqExp = this.dataRef.level * 100;
+                }
+            }
+
+            createHpBar() {
+                this.hpBarContainer = document.createElement('div');
+                this.hpBarContainer.className = 'hp-bar-container';
+                
+                // Add Level Label above HP bar
+                this.levelLabel = document.createElement('div');
+                this.levelLabel.className = 'absolute -top-[18px] left-1/2 transform -translate-x-1/2 text-[10px] font-bold whitespace-nowrap drop-shadow-[0_1px_1px_rgba(0,0,0,1)]';
+                this.levelLabel.style.color = this.isEnemy ? '#fca5a5' : '#86efac';
+                this.levelLabel.textContent = `Lv.${this.level}`;
+                this.hpBarContainer.appendChild(this.levelLabel);
+
+                this.hpBarFill = document.createElement('div');
+                this.hpBarFill.className = 'hp-bar-fill';
+                this.hpBarFill.style.backgroundColor = this.isEnemy ? '#ef4444' : '#4ade80';
+                this.hpBarContainer.appendChild(this.hpBarFill);
+                document.getElementById('hp-layer').appendChild(this.hpBarContainer);
+                this.updateHpBarVisual();
+            }
+
+            updateHpBarVisual() {
+                const pct = Math.max(0, this.hp / this.maxHp) * 100;
+                this.hpBarFill.style.width = `${pct}%`;
+            }
+
+            takeDamage(amount) {
+                if (this.hp <= 0) return;
+                this.hp -= amount;
+                this.updateHpBarVisual();
+                if (this.hp <= 0) {
+                    this.sink();
+                }
+            }
+
+            sink() {
+                this.hp = 0;
+                for(let i=0; i<3; i++) {
+                    setTimeout(() => {
+                        const pos = this.mesh.position.clone();
+                        pos.z += (Math.random() - 0.5) * this.typeData.size[2];
+                        createExplosionEffect(pos, 20);
+                    }, i * 300);
+                }
+                
+                let sinkInterval = setInterval(() => {
+                    this.mesh.position.y -= 0.1;
+                    this.mesh.rotation.x += 0.01;
+                    if (this.mesh.position.y < -this.typeData.size[2]) {
+                        clearInterval(sinkInterval);
+                        scene.remove(this.mesh);
+                    }
+                }, 30);
+
+                if (this.hpBarContainer && this.hpBarContainer.parentNode) {
+                    this.hpBarContainer.parentNode.removeChild(this.hpBarContainer);
+                }
+            }
+
+            fireAt(targetPos, specificTargetEntity = null) {
+                this.weapons.forEach(wType => {
+                    if (this.weaponTimers[wType] <= 0) {
+                        let actualTarget = targetPos.clone();
+                        let targetEnt = specificTargetEntity;
+                        
+                        if (wType === 'aa_gun') {
+                            const enemyAir = projectiles.find(p => p.isEnemy !== this.isEnemy && p.type === 'air' && !p.destroyed);
+                            if (enemyAir) {
+                                actualTarget = enemyAir.mesh.position.clone();
+                                targetEnt = enemyAir;
+                            }
+                        }
+
+                        const dx = actualTarget.x - this.mesh.position.x;
+                        const dz = actualTarget.z - this.mesh.position.z;
+                        const dist = Math.hypot(dx, dz);
+                        
+                        if (dist <= this.range) {
+                            const wpData = WEAPONS[wType];
+                            spawnProjectile(this.mesh.position.clone(), actualTarget, wType, this.isEnemy, wpData, targetEnt, this);
+                            this.weaponTimers[wType] = wpData.reload;
+                            
+                            createMuzzleFlash(this.mesh.position.clone());
+                        }
+                    }
+                });
+            }
+
+            update(dt) {
+                for (let w in this.weaponTimers) {
+                    if (this.weaponTimers[w] > 0) this.weaponTimers[w] -= dt;
+                }
+
+                if (this.hp > 0) {
+                    // 艦の移動を縦横（X, Z）のみに制限し、Y軸の浮遊を防止
+                    this.mesh.position.y = 0;
+
+                    const pos = this.mesh.position.clone();
+                    pos.y += this.typeData.size[1] + 5;
+                    pos.project(camera);
+                    
+                    if (pos.z < 1) { 
+                        const x = (pos.x * .5 + .5) * window.innerWidth;
+                        const y = (pos.y * -.5 + .5) * window.innerHeight;
+                        this.hpBarContainer.style.display = 'block';
+                        this.hpBarContainer.style.left = `${x}px`;
+                        this.hpBarContainer.style.top = `${y}px`;
+                    } else {
+                        this.hpBarContainer.style.display = 'none';
+                    }
+                }
+            }
+        }
+
+        class Projectile {
+            constructor(mesh, start, target, type, isEnemy, data, targetEntity, sourceShip) {
+                this.mesh = mesh;
+                this.start = start.clone();
+                this.target = target.clone();
+                this.type = type;
+                this.isEnemy = isEnemy;
+                this.sourceShip = sourceShip;
+                
+                const dmgMod = sourceShip ? (1 + (sourceShip.level - 1) * 0.05) : 1;
+                this.damage = data.damage * dmgMod;
+                
+                this.speed = data.speed;
+                this.splash = data.splash;
+                this.targetEntity = targetEntity;
+                this.destroyed = false;
+                
+                if (this.type === 'parabola') {
+                    const dx = this.target.x - this.start.x;
+                    const dz = this.target.z - this.start.z;
+                    const dist2d = Math.hypot(dx, dz);
+                    this.flightTime = Math.max(dist2d / this.speed, 0.1);
+                    
+                    this.vx = dx / this.flightTime;
+                    this.vz = dz / this.flightTime;
+                    this.g = 80; 
+                    this.vy = (0.5 * this.g * Math.pow(this.flightTime, 2) - this.start.y) / this.flightTime; 
+                } else if (this.type === 'straight') {
+                    const dx = this.target.x - this.start.x;
+                    const dz = this.target.z - this.start.z;
+                    const angle = Math.atan2(dx, dz);
+                    this.vx = Math.sin(angle) * this.speed;
+                    this.vz = Math.cos(angle) * this.speed;
+                    this.mesh.rotation.y = angle;
+                }
+            }
+            
+            update(dt) {
+                if (this.destroyed) return;
+
+                if (this.type === 'parabola') {
+                    this.mesh.position.x += this.vx * dt;
+                    this.mesh.position.z += this.vz * dt;
+                    this.mesh.position.y += this.vy * dt;
+                    this.vy -= this.g * dt;
+                    
+                    if (this.mesh.position.y <= 0) {
+                        explodeAndDamage(this.mesh.position, this.damage, this.isEnemy, this.splash, this.sourceShip);
+                        this.destroy();
+                    }
+                } else if (this.type === 'straight') {
+                    this.mesh.position.x += this.vx * dt;
+                    this.mesh.position.z += this.vz * dt;
+                    
+                    if (Math.abs(this.mesh.position.x) > 2000 || Math.abs(this.mesh.position.z) > 2000) {
+                        this.destroy(); return;
+                    }
+                    
+                    for (let s of activeShips) {
+                        if (s.isEnemy !== this.isEnemy && s.hp > 0) {
+                            // 魚雷の命中判定を明確化するため、高さ(Y)を無視した2D平面距離で判定する
+                            const dx = this.mesh.position.x - s.mesh.position.x;
+                            const dz = this.mesh.position.z - s.mesh.position.z;
+                            const dist2d = Math.hypot(dx, dz);
+                            
+                            const hitRadius = s.typeData.size[2] / 2 + 3; // 艦の全長を基準に少し余裕を持たせる
+                            if (dist2d < hitRadius) {
+                                explodeAndDamage(this.mesh.position, this.damage, this.isEnemy, this.splash, this.sourceShip);
+                                this.destroy();
+                                return;
+                            }
+                        }
+                    }
+                } else if (this.type === 'air') {
+                    const dx = this.target.x - this.mesh.position.x;
+                    const dz = this.target.z - this.mesh.position.z;
+                    const dist = Math.hypot(dx, dz);
+                    
+                    if (dist < 5) {
+                        explodeAndDamage(new THREE.Vector3(this.target.x, 0, this.target.z), this.damage, this.isEnemy, this.splash, this.sourceShip);
+                        this.destroy();
+                    } else {
+                        const angle = Math.atan2(dx, dz);
+                        this.mesh.rotation.y = angle;
+                        this.mesh.position.x += Math.sin(angle) * this.speed * dt;
+                        this.mesh.position.z += Math.cos(angle) * this.speed * dt;
+                        this.mesh.position.y = THREE.MathUtils.lerp(this.mesh.position.y, 60, dt * 2);
+                    }
+                } else if (this.type === 'direct') { 
+                    if (this.targetEntity && !this.targetEntity.destroyed) {
+                        this.target.copy(this.targetEntity.mesh.position);
+                    }
+                    
+                    const dx = this.target.x - this.mesh.position.x;
+                    const dy = this.target.y - this.mesh.position.y;
+                    const dz = this.target.z - this.mesh.position.z;
+                    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                    
+                    if (dist < 5) {
+                        if (this.targetEntity && !this.targetEntity.destroyed && this.targetEntity.type === 'air') {
+                            this.targetEntity.destroy(); 
+                            createExplosionEffect(this.mesh.position, 5); 
+                            if(this.sourceShip && !this.isEnemy) {
+                                this.sourceShip.addExp(5);
+                            }
+                        } else if (this.mesh.position.y <= 0) {
+                            explodeAndDamage(this.mesh.position, this.damage, this.isEnemy, this.splash, this.sourceShip);
+                        }
+                        this.destroy();
+                    } else {
+                        this.mesh.position.x += (dx / dist) * this.speed * dt;
+                        this.mesh.position.y += (dy / dist) * this.speed * dt;
+                        this.mesh.position.z += (dz / dist) * this.speed * dt;
+                    }
+                }
+            }
+            
+            destroy() {
+                this.destroyed = true;
+                scene.remove(this.mesh);
+            }
+        }
+
+        function spawnProjectile(startPos, targetPos, wType, isEnemy, wpData, targetEntity, sourceShip) {
+            let mesh;
+            if (wType === 'torpedo') {
+                const geo = new THREE.CylinderGeometry(0.5, 0.5, 4, 8);
+                geo.rotateX(Math.PI/2);
+                mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color: wpData.color}));
+                startPos.y = 0; 
+            } else if (wType === 'aircraft') {
+                const group = new THREE.Group();
+                const fuselage = new THREE.Mesh(new THREE.ConeGeometry(0.8, 3, 4), new THREE.MeshBasicMaterial({color: wpData.color}));
+                fuselage.rotation.x = Math.PI/2;
+                const wings = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 1), new THREE.MeshBasicMaterial({color: wpData.color}));
+                group.add(fuselage);
+                group.add(wings);
+                mesh = group;
+                startPos.y = 20; 
+            } else {
+                const geo = new THREE.SphereGeometry(wpData.size, 8, 8);
+                mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color: wpData.color}));
+                startPos.y += 5; 
+            }
+            
+            mesh.position.copy(startPos);
+            scene.add(mesh);
+            
+            const proj = new Projectile(mesh, startPos, targetPos, wpData.type, isEnemy, wpData, targetEntity, sourceShip);
+            projectiles.push(proj);
+        }
+
+        function explodeAndDamage(pos, damage, isEnemySource, radius, sourceShip) {
+            createExplosionEffect(pos, radius);
+            
+            activeShips.forEach(ship => {
+                if (ship.isEnemy !== isEnemySource && ship.hp > 0) {
+                    // 爆発のダメージ判定も高さ(Y)を無視した2D平面距離に変更
+                    const dx = ship.mesh.position.x - pos.x;
+                    const dz = ship.mesh.position.z - pos.z;
+                    const dist = Math.hypot(dx, dz);
+                    
+                    if (dist < radius) {
+                        ship.takeDamage(damage);
+
+                        if(!isEnemySource && sourceShip) {
+                            // Exp scales with enemy level
+                            const expHit = Math.floor(5 * (1 + ship.level * 0.2));
+                            sourceShip.addExp(expHit); 
+                            battleEarnedCredits += 5; 
+                            credits += 5;
+
+                            if (ship.hp <= 0) {
+                                const expKill = Math.floor(25 * (1 + ship.level * 0.2));
+                                sourceShip.addExp(expKill);
+                                battleEarnedCredits += 100; 
+                                credits += 100;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createExplosionEffect(pos, size = 10) {
+            const geo = new THREE.SphereGeometry(1, 8, 8);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xff5500, transparent: true, opacity: 1 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.copy(pos);
+            scene.add(mesh);
+            explosions.push({ mesh, life: 1.0, size: size });
+        }
+
+        function createMuzzleFlash(pos) {
+            const geo = new THREE.SphereGeometry(2, 4, 4);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xffffaa, transparent: true, opacity: 0.8 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.copy(pos);
+            mesh.position.y += 5;
+            scene.add(mesh);
+            setTimeout(() => scene.remove(mesh), 100);
+        }
+
+        // --- Battle Logic ---
+        function clearBattleScene() {
+            activeShips.forEach(s => {
+                scene.remove(s.mesh);
+                if (s.hpBarContainer && s.hpBarContainer.parentNode) {
+                    s.hpBarContainer.parentNode.removeChild(s.hpBarContainer);
+                }
+            });
+            activeShips = [];
+            
+            projectiles.forEach(p => scene.remove(p.mesh));
+            projectiles = [];
+            
+            explosions.forEach(e => scene.remove(e.mesh));
+            explosions = [];
+        }
+
+        function startBattle() {
+            gameState = 'battle';
+            battleEarnedCredits = 0;
+            escapeTimer = 0;
+            controlledShipIndex = 0; // Default to first ship
+            
+            document.getElementById('port-ui').style.transform = 'translateX(-100%)';
+            document.getElementById('battle-ui').classList.remove('hidden');
+            document.getElementById('battle-result').classList.add('hidden');
+            document.getElementById('escape-bar-container').style.display = 'none';
+            document.getElementById('escape-text').classList.add('hidden');
+            
+            clearBattleScene();
+            
+            let flagshipLevel = 1;
+
+            // Deploy Player Fleet
+            fleetIds.forEach((id, idx) => {
+                const data = myShips.find(s => s.id === id);
+                if (idx === 0) flagshipLevel = data.level || 1; // Extract level for enemy scaling
+                
+                const typeData = SHIP_TYPES[data.type];
+                data.hp = data.maxHp; 
+                const ship = new Ship(data, typeData, false);
+                ship.fleetIndex = idx;
+                
+                // Formation positioning
+                ship.mesh.position.set(idx * 25 - ((fleetIds.length-1)*25)/2, 0, 150);
+                ship.mesh.rotation.y = 0; // Facing North (+Z)
+                activeShips.push(ship);
+            });
+            
+            // Generate Enemy Fleet
+            let totalCost = fleetIds.reduce((sum, id) => sum + SHIP_TYPES[myShips.find(s=>s.id===id).type].cost, 0);
+            let enemyCostPool = totalCost * (0.8 + Math.random() * 0.4); 
+            const types = Object.keys(SHIP_TYPES);
+            
+            let enemyCount = 0;
+            while (enemyCostPool > 400 && enemyCount < 6) {
+                let type = types[Math.floor(Math.random() * types.length)];
+                let tData = SHIP_TYPES[type];
+                if (tData.cost > enemyCostPool && enemyCostPool > 600) continue;
+                
+                // Determine Enemy Level based on player flagship
+                let enemyLevel = 2;
+                if (flagshipLevel >= 5) {
+                    const minL = Math.max(1, flagshipLevel - 3);
+                    const maxL = flagshipLevel + 3;
+                    enemyLevel = Math.floor(Math.random() * (maxL - minL + 1)) + minL;
+                }
+                
+                const eData = { name: 'Enemy ' + tData.name.split(' ')[0], hp: tData.hp, maxHp: tData.hp, level: enemyLevel };
+                const enemy = new Ship(eData, tData, true);
+                enemy.mesh.position.set((Math.random() - 0.5) * 400, 0, -200 - Math.random() * 300);
+                enemy.mesh.rotation.y = Math.PI; // Facing South (-Z)
+                activeShips.push(enemy);
+                
+                enemyCostPool -= tData.cost;
+                enemyCount++;
+            }
+            
+            // Initialize Camera
+            if (activeShips.length > 0) {
+                const flagship = activeShips[0];
+                camera.position.set(
+                    flagship.mesh.position.x, 
+                    flagship.mesh.position.y + 60, 
+                    flagship.mesh.position.z - 120
+                );
+                camera.lookAt(flagship.mesh.position);
+            }
+        }
+
+        function updateBattle(dt) {
+            const friendlies = activeShips.filter(s => !s.isEnemy && s.hp > 0);
+            const enemies = activeShips.filter(s => s.isEnemy && s.hp > 0);
+            
+            // --- Escape Logic (Hold E) ---
+            if (keys['e'] && friendlies.length > 0) {
+                escapeTimer += dt;
+                document.getElementById('escape-bar-container').style.display = 'block';
+                document.getElementById('escape-text').classList.remove('hidden');
+                document.getElementById('escape-bar-fill').style.width = `${(escapeTimer / 5) * 100}%`;
+                
+                if (escapeTimer >= 5) {
+                    endBattle(false, true); 
+                    return;
+                }
+            } else {
+                escapeTimer = 0;
+                document.getElementById('escape-bar-container').style.display = 'none';
+                document.getElementById('escape-text').classList.add('hidden');
+            }
+
+            if (friendlies.length === 0 || enemies.length === 0) {
+                endBattle(friendlies.length > 0);
+                return;
+            }
+
+            // Find currently controlled ship
+            let flagship = friendlies.find(s => s.fleetIndex === controlledShipIndex);
+            if (!flagship && friendlies.length > 0) {
+                // Auto switch if currently controlled ship is sunk
+                flagship = friendlies[0];
+                controlledShipIndex = flagship.fleetIndex;
+            }
+
+            // --- Player Input & Movement ---
+            if (flagship) {
+                if (keys['w']) flagship.speed = Math.min(flagship.maxSpeed, flagship.speed + flagship.accel * dt);
+                if (keys['s']) flagship.speed = Math.max(-flagship.maxSpeed/2, flagship.speed - flagship.accel * dt);
+                if (!keys['w'] && !keys['s']) flagship.speed *= 0.98;
+
+                if (keys['a']) flagship.mesh.rotation.y += flagship.turnSpeed * dt;
+                if (keys['d']) flagship.mesh.rotation.y -= flagship.turnSpeed * dt;
+
+                flagship.mesh.position.x += Math.sin(flagship.mesh.rotation.y) * flagship.speed * dt;
+                flagship.mesh.position.z += Math.cos(flagship.mesh.rotation.y) * flagship.speed * dt;
+            }
+
+            // --- Escort AI ---
+            let escortIndex = 1;
+            friendlies.forEach((ship) => {
+                if (ship === flagship) return; // Skip controlled ship
+
+                const offsetX = (escortIndex % 2 === 1 ? -1 : 1) * 30 * Math.ceil(escortIndex/2);
+                const offsetZ = -40 * Math.ceil(escortIndex/2); 
+                
+                const targetX = flagship.mesh.position.x + offsetX * Math.cos(-flagship.mesh.rotation.y) - offsetZ * Math.sin(-flagship.mesh.rotation.y);
+                const targetZ = flagship.mesh.position.z + offsetX * Math.sin(-flagship.mesh.rotation.y) + offsetZ * Math.cos(-flagship.mesh.rotation.y);
+                
+                const dx = targetX - ship.mesh.position.x;
+                const dz = targetZ - ship.mesh.position.z;
+                const dist = Math.hypot(dx, dz);
+                
+                if (dist > 10) {
+                    const targetAngle = Math.atan2(dx, dz);
+                    let angleDiff = targetAngle - ship.mesh.rotation.y;
+                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff)); // Normalize angle
+                    
+                    ship.mesh.rotation.y += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), ship.turnSpeed * dt);
+                    ship.speed = Math.min(ship.maxSpeed, dist * 2);
+                    ship.mesh.position.x += Math.sin(ship.mesh.rotation.y) * ship.speed * dt;
+                    ship.mesh.position.z += Math.cos(ship.mesh.rotation.y) * ship.speed * dt;
+                } else {
+                    // Match flagship heading when in position
+                    ship.speed *= 0.9;
+                    let angleDiff = flagship.mesh.rotation.y - ship.mesh.rotation.y;
+                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+                    ship.mesh.rotation.y += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), ship.turnSpeed * dt * 0.5);
+                }
+                escortIndex++;
+            });
+
+            // --- Enemy AI ---
+            enemies.forEach(enemy => {
+                let closest = null;
+                let minDist = Infinity;
+                friendlies.forEach(f => {
+                    let d = enemy.mesh.position.distanceTo(f.mesh.position);
+                    if (d < minDist) { minDist = d; closest = f; }
+                });
+                
+                if (closest) {
+                    if (minDist <= enemy.range && Math.random() < 0.05) { 
+                        const targetPos = closest.mesh.position.clone();
+                        targetPos.x += (Math.random() - 0.5) * 40;
+                        targetPos.z += (Math.random() - 0.5) * 40;
+                        enemy.fireAt(targetPos, closest);
+                    }
+                    
+                    // Always try to face the target to fix drifting bug
+                    const dx = closest.mesh.position.x - enemy.mesh.position.x;
+                    const dz = closest.mesh.position.z - enemy.mesh.position.z;
+                    const targetAngle = Math.atan2(dx, dz);
+                    
+                    let angleDiff = targetAngle - enemy.mesh.rotation.y;
+                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff)); // Normalize angle
+                    
+                    enemy.mesh.rotation.y += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), enemy.turnSpeed * dt);
+                    
+                    if (minDist > enemy.range * 0.6) {
+                        enemy.speed = Math.min(enemy.maxSpeed, enemy.speed + enemy.accel * dt);
+                    } else {
+                        enemy.speed *= 0.95; 
+                    }
+                }
+                
+                enemy.mesh.position.x += Math.sin(enemy.mesh.rotation.y) * enemy.speed * dt;
+                enemy.mesh.position.z += Math.cos(enemy.mesh.rotation.y) * enemy.speed * dt;
+            });
+
+            // --- Camera Control (Auto Follow) ---
+            if (flagship) {
+                const target = flagship.mesh.position;
+                
+                const backOffset = 120;
+                const upOffset = 60;
+                
+                const cameraTargetX = target.x - Math.sin(flagship.mesh.rotation.y) * backOffset;
+                const cameraTargetZ = target.z - Math.cos(flagship.mesh.rotation.y) * backOffset;
+                const cameraTargetY = target.y + upOffset;
+
+                camera.position.x = THREE.MathUtils.lerp(camera.position.x, cameraTargetX, dt * 4);
+                camera.position.y = THREE.MathUtils.lerp(camera.position.y, cameraTargetY, dt * 4);
+                camera.position.z = THREE.MathUtils.lerp(camera.position.z, cameraTargetZ, dt * 4);
+                
+                const lookAtTarget = target.clone();
+                lookAtTarget.x += Math.sin(flagship.mesh.rotation.y) * 30;
+                lookAtTarget.z += Math.cos(flagship.mesh.rotation.y) * 30;
+                
+                camera.lookAt(lookAtTarget);
+            }
+        }
+
+        function endBattle(isWin, isEscape = false) {
+            if (!document.getElementById('battle-result').classList.contains('hidden')) return; 
+            
+            document.getElementById('escape-bar-container').style.display = 'none';
+            document.getElementById('escape-text').classList.add('hidden');
+            
+            document.getElementById('battle-result').classList.remove('hidden');
+            const title = document.getElementById('result-title');
+            const desc = document.getElementById('result-desc');
+            
+            if (isWin) {
+                title.textContent = "VICTORY";
+                title.className = "text-5xl font-black mb-4 text-green-400";
+            } else if (isEscape) {
+                title.textContent = "RETREAT";
+                title.className = "text-5xl font-black mb-4 text-yellow-500";
+            } else {
+                title.textContent = "DEFEAT";
+                title.className = "text-5xl font-black mb-4 text-red-500";
+            }
+
+            desc.innerHTML = `Battle Earnings<br><span class="text-3xl text-yellow-400 font-bold mt-2 block">+${battleEarnedCredits} G</span>`;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = Math.min(clock.getDelta(), 0.1); 
+
+            if (gameState === 'port') {
+                portTime += dt;
+                camera.position.x = Math.sin(portTime * 0.1) * 300;
+                camera.position.z = Math.cos(portTime * 0.1) * 300;
+                camera.position.y = 80;
+                camera.lookAt(0, 0, 0);
+            } else if (gameState === 'battle') {
+                updateBattle(dt);
+            }
+
+            activeShips.forEach(s => s.update(dt));
+            
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                projectiles[i].update(dt);
+                if (projectiles[i].destroyed) {
+                    projectiles.splice(i, 1);
+                }
+            }
+
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                let exp = explosions[i];
+                exp.life -= dt * 1.5;
+                const scale = 1 + (1 - exp.life) * exp.size;
+                exp.mesh.scale.setScalar(scale);
+                exp.mesh.material.opacity = exp.life;
+                if (exp.life <= 0) {
+                    scene.remove(exp.mesh);
+                    explosions.splice(i, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Initialize application when ready
+        window.onload = init;
+
+    </script>
+</body>
+</html>
