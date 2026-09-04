@@ -1,15 +1,16 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>3D Naval Battle Game</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Inter', sans-serif; user-select: none; }
-        #three-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        #three-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; touch-action: none; }
         #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; pointer-events: none; }
         .pointer-events-auto { pointer-events: auto; }
         
@@ -30,6 +31,17 @@
             width: 250px; height: 12px; background-color: rgba(0,0,0,0.8); border: 1px solid #fff; z-index: 20; border-radius: 6px; overflow: hidden;
         }
         #escape-bar-fill { height: 100%; width: 0%; background-color: #fbbf24; }
+
+        /* Mobile D-Pad styles */
+        .dpad-btn, #btn-mobile-switch, #btn-mobile-escape, #btn-mobile-fire { 
+            touch-action: none; /* Prevent scroll/zoom on mobile tap */
+        }
+        .dpad-btn { 
+            position: absolute; width: 40px; height: 40px; background-color: rgba(255,255,255,0.2); 
+            border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white;
+            transition: background-color 0.1s;
+        }
+        .dpad-btn:active { background-color: rgba(255,255,255,0.5); }
     </style>
 </head>
 <body>
@@ -41,8 +53,13 @@
         
         <!-- Port UI -->
         <div id="port-ui" class="pointer-events-auto absolute left-0 top-0 h-full w-full sm:w-[420px] bg-slate-900 bg-opacity-95 text-white p-6 shadow-2xl border-r border-slate-700 overflow-y-auto backdrop-blur-sm transition-transform duration-300">
-            <h1 class="text-3xl font-black mb-1 text-blue-400 tracking-wider">NAVAL COMMAND</h1>
-            <p class="text-xs text-gray-400 mb-6 uppercase tracking-widest">Home Port / Dockyard</p>
+            <div class="flex justify-between items-center mb-1">
+                <h1 class="text-3xl font-black text-blue-400 tracking-wider">NAVAL COMMAND</h1>
+            </div>
+            <div class="flex justify-between items-center mb-6">
+                <p class="text-xs text-gray-400 uppercase tracking-widest">Home Port / Dockyard</p>
+                <button id="btn-toggle-control" class="bg-slate-700 px-2 py-1 text-[10px] rounded border border-slate-500 hover:bg-slate-600 transition-colors">Mode: PC</button>
+            </div>
             
             <div class="flex justify-between items-end mb-6 bg-slate-800 p-4 rounded-lg border border-slate-700">
                 <span class="text-gray-300">Credits</span>
@@ -57,7 +74,7 @@
             </div>
 
             <!-- Build Section -->
-            <div class="mb-6">
+            <div class="mb-4">
                 <h2 class="text-sm uppercase tracking-widest text-gray-400 border-b border-slate-700 pb-2 mb-3">Shipyard</h2>
                 <div class="space-y-3">
                     <select id="build-type" class="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded focus:outline-none focus:border-blue-500"></select>
@@ -68,15 +85,36 @@
                 </div>
             </div>
 
+            <!-- Enhance Section -->
+            <div class="mb-6">
+                <h2 class="text-sm uppercase tracking-widest text-gray-400 border-b border-slate-700 pb-2 mb-3">Enhance Ship</h2>
+                <div class="space-y-3 p-3 bg-slate-800 rounded-lg border border-slate-700">
+                    <div class="flex flex-col space-y-1">
+                        <label class="text-[10px] text-gray-400 uppercase">Base Ship (Gets Proficiency)</label>
+                        <select id="enhance-base" class="w-full bg-slate-900 border border-slate-600 text-white p-2 rounded focus:outline-none focus:border-blue-500 text-sm"></select>
+                    </div>
+                    <div class="flex flex-col space-y-1">
+                        <label class="text-[10px] text-gray-400 uppercase">Material Ship (Consumed)</label>
+                        <select id="enhance-material" class="w-full bg-slate-900 border border-slate-600 text-white p-2 rounded focus:outline-none focus:border-blue-500 text-sm"></select>
+                    </div>
+                    <button id="btn-enhance" class="w-full bg-pink-600 hover:bg-pink-500 text-white font-bold py-2 rounded transition-colors shadow-lg active:scale-95 uppercase tracking-wide text-sm">
+                        Merge Ship
+                    </button>
+                </div>
+            </div>
+
             <!-- Global Port Message Area -->
             <div id="port-msg-area" class="mb-2 text-center h-5 transition-opacity"></div>
 
             <!-- Fleet Management Section -->
             <div class="mb-6">
-                <h2 class="text-sm uppercase tracking-widest text-gray-400 border-b border-slate-700 pb-2 mb-3 flex justify-between">
-                    <span>Active Fleet</span>
-                    <span id="fleet-count" class="text-green-400">0 / 4</span>
-                </h2>
+                <div class="flex justify-between items-end border-b border-slate-700 pb-2 mb-3">
+                    <h2 class="text-sm uppercase tracking-widest text-gray-400">Active Fleet</h2>
+                    <div class="flex items-center space-x-3">
+                        <button id="btn-expand-fleet" class="bg-purple-600 hover:bg-purple-500 text-[10px] font-bold px-2 py-1 rounded transition-colors">+Limit (5000G)</button>
+                        <span id="fleet-count" class="text-green-400 font-bold">0 / 4</span>
+                    </div>
+                </div>
                 <div id="ship-list" class="space-y-2 max-h-72 overflow-y-auto pr-2">
                     <!-- Ship items will be injected here -->
                 </div>
@@ -91,14 +129,22 @@
         <!-- Battle UI -->
         <div id="battle-ui" class="hidden absolute inset-0">
             <!-- Controls Guide -->
-            <div class="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-gray-200 px-6 py-3 rounded-lg text-sm text-center border border-slate-700 backdrop-blur-md">
-                <div class="flex space-x-4 justify-center font-mono">
+            <div class="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-gray-200 px-6 py-3 rounded-lg text-sm text-center border border-slate-700 backdrop-blur-md z-20">
+                <div id="pc-guide" class="flex space-x-4 justify-center font-mono">
                     <span>[WASD] Move Ship</span>
                     <span class="text-blue-300">[1-4] Switch Ship</span>
                     <span>[TAP/CLICK] Fire</span>
                     <span class="text-yellow-400">[Hold E] Escape</span>
                 </div>
+                <div id="mobile-guide" class="hidden font-mono text-center">
+                    <span>Use On-Screen Controls</span>
+                </div>
                 <div id="battle-msg" class="text-yellow-400 font-bold text-lg mt-2 tracking-wide">ENGAGE THE ENEMY</div>
+            </div>
+
+            <!-- Left Top Fleet HP Bars -->
+            <div id="fleet-hp-container" class="absolute top-20 left-4 flex flex-col space-y-1 pointer-events-none z-20">
+                <!-- Fleet HP will be injected here -->
             </div>
 
             <!-- Escape Bar -->
@@ -107,14 +153,47 @@
             </div>
             <div id="escape-text" class="hidden absolute top-[115px] left-1/2 transform -translate-x-1/2 text-xs text-white drop-shadow-md z-20">ESCAPING...</div>
 
-            <!-- Return Button (Hidden initially during battle) -->
+            <!-- Mobile Controls Layer -->
+            <div id="mobile-controls" class="hidden absolute inset-0 pointer-events-none z-30">
+                <!-- D-Pad -->
+                <div class="absolute bottom-8 left-8 w-36 h-36 bg-black bg-opacity-30 rounded-full border border-white border-opacity-20 pointer-events-auto backdrop-blur-sm">
+                    <button id="dpad-up" class="dpad-btn top-2 left-1/2 transform -translate-x-1/2">W</button>
+                    <button id="dpad-down" class="dpad-btn bottom-2 left-1/2 transform -translate-x-1/2">S</button>
+                    <button id="dpad-left" class="dpad-btn left-2 top-1/2 transform -translate-y-1/2">A</button>
+                    <button id="dpad-right" class="dpad-btn right-2 top-1/2 transform -translate-y-1/2">D</button>
+                </div>
+                <!-- Action Buttons -->
+                <div class="absolute bottom-8 right-8 flex gap-4 pointer-events-auto items-end">
+                    <button id="btn-mobile-switch" class="w-14 h-14 rounded-full bg-blue-600 bg-opacity-70 text-white text-xs font-bold active:bg-blue-500 shadow-lg border border-blue-400 flex items-center justify-center">SW</button>
+                    <button id="btn-mobile-escape" class="w-14 h-14 rounded-full bg-yellow-600 bg-opacity-70 text-white text-xs font-bold active:bg-yellow-500 shadow-lg border border-yellow-400 flex items-center justify-center">ESC</button>
+                    <button id="btn-mobile-fire" class="w-20 h-20 rounded-full bg-red-600 bg-opacity-70 text-white font-bold text-lg active:bg-red-500 shadow-[0_0_15px_rgba(220,38,38,0.5)] border border-red-400 flex items-center justify-center">FIRE</button>
+                </div>
+            </div>
+
+            <!-- Battle Result Screen -->
             <div id="battle-result" class="hidden absolute inset-0 flex items-center justify-center bg-black bg-opacity-80 backdrop-blur-sm pointer-events-auto z-50">
-                <div class="text-center p-8 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl">
-                    <h2 id="result-title" class="text-5xl font-black mb-4">VICTORY</h2>
-                    <p id="result-desc" class="text-xl text-gray-300 mb-8">Reward: +1000 G</p>
-                    <button id="btn-return" class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded text-white font-bold text-xl uppercase tracking-wider transition-colors active:scale-95">
-                        Return to Port
-                    </button>
+                <div class="text-center p-8 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl min-w-[400px]">
+                    <h2 id="result-title" class="text-5xl font-black mb-2">VICTORY</h2>
+                    
+                    <div id="result-streak" class="text-sm text-yellow-400 font-bold mb-4 hidden">Consecutive Battles Bonus Active!</div>
+
+                    <p id="result-desc" class="text-xl text-gray-300 mb-4 border-b border-slate-700 pb-4">Reward: +1000 G</p>
+                    
+                    <div class="mb-6 text-left">
+                        <h3 class="text-sm text-gray-400 uppercase tracking-widest mb-2 text-center">Fleet Experience Earned</h3>
+                        <div id="result-exp-list" class="space-y-1 bg-slate-800 p-3 rounded border border-slate-700 max-h-40 overflow-y-auto">
+                            <!-- Exp items injected here -->
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col space-y-3">
+                        <button id="btn-continue" class="bg-red-600 hover:bg-red-500 px-8 py-3 rounded text-white font-bold text-xl uppercase tracking-wider transition-colors active:scale-95 shadow-lg hidden">
+                            Continue Battle
+                        </button>
+                        <button id="btn-return" class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded text-white font-bold text-lg uppercase tracking-wider transition-colors active:scale-95">
+                            Return to Port (Retreat)
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -125,7 +204,6 @@
 
     <script>
         // --- Game Configuration & Data ---
-        
         const SHIP_TYPES = {
             Destroyer: { name: "駆逐艦 (Destroyer)", cost: 500, speed: 30, accel: 15, range: 180, hp: 100, weapons: ['main_gun', 'torpedo'], color: 0x88aaff, size: [2, 1, 8], turnSpeed: 1.5 },
             Submarine: { name: "潜水艦 (Submarine)", cost: 800, speed: 20, accel: 10, range: 250, hp: 80, weapons: ['torpedo'], color: 0x1a2b3c, size: [1.2, 0.4, 6], turnSpeed: 1.0 },
@@ -148,6 +226,8 @@
         let shipIdCounter = 1;
         let myShips = [];
         let fleetIds = [];
+        let fleetLimitExtensions = 0; // Max 3 extensions (cap at +3)
+        let controlMode = 'pc'; // 'pc' or 'mobile'
         
         let activeShips = [];
         let projectiles = [];
@@ -155,7 +235,9 @@
 
         let battleEarnedCredits = 0;
         let escapeTimer = 0;
-        let controlledShipIndex = 0; // 0~3 for active fleet
+        let controlledShipIndex = 0; 
+        let consecutiveBattles = 0; 
+        let survivalExpTimer = 0; 
 
         // Input state
         const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, w: false, a: false, s: false, d: false, e: false };
@@ -213,6 +295,7 @@
             window.addEventListener('resize', onWindowResize);
             setupInput();
             setupUIEvents();
+            setupMobileControls();
 
             // Initial UI update
             updatePortUI();
@@ -236,6 +319,37 @@
         }
 
         function setupUIEvents() {
+            // Mode Toggle
+            document.getElementById('btn-toggle-control').addEventListener('click', (e) => {
+                controlMode = controlMode === 'pc' ? 'mobile' : 'pc';
+                e.target.textContent = `Mode: ${controlMode.toUpperCase()}`;
+                
+                if (controlMode === 'mobile') {
+                    document.getElementById('pc-guide').classList.add('hidden');
+                    document.getElementById('mobile-guide').classList.remove('hidden');
+                } else {
+                    document.getElementById('pc-guide').classList.remove('hidden');
+                    document.getElementById('mobile-guide').classList.add('hidden');
+                }
+            });
+
+            // Fleet Expansion
+            document.getElementById('btn-expand-fleet').addEventListener('click', () => {
+                if (fleetLimitExtensions >= 3) {
+                    showPortMessage("Fleet limit is already at maximum!", true);
+                    return;
+                }
+                if (credits < 5000) {
+                    showPortMessage("Not enough credits to expand fleet (5000G required)!", true);
+                    return;
+                }
+                credits -= 5000;
+                fleetLimitExtensions++;
+                updatePortUI();
+                showPortMessage(`Fleet limit expanded to ${4 + fleetLimitExtensions}!`);
+            });
+
+            // Construct Ship
             document.getElementById('btn-build').addEventListener('click', () => {
                 const type = document.getElementById('build-type').value;
                 const nameInput = document.getElementById('build-name');
@@ -258,8 +372,9 @@
                     hp: data.hp, 
                     maxHp: data.hp,
                     level: 1,
-                    maxLevel: 20, // Default Max Level
-                    exp: 0
+                    maxLevel: 20, 
+                    exp: 0,
+                    proficiency: 0 // New parameter for proficiency
                 });
                 nameInput.value = "";
                 showPortMessage("Ship constructed successfully!");
@@ -267,22 +382,64 @@
                 updatePortUI();
             });
 
-            document.getElementById('btn-sortie').addEventListener('click', startBattle);
+            // Enhance (Merge) Ship Logic
+            document.getElementById('enhance-base').addEventListener('change', updateMaterialDropdown);
+            
+            document.getElementById('btn-enhance').addEventListener('click', () => {
+                const baseId = parseInt(document.getElementById('enhance-base').value);
+                const matId = parseInt(document.getElementById('enhance-material').value);
+                
+                if (!baseId || !matId || isNaN(matId)) {
+                    showPortMessage("Cannot merge! Missing base or material ship.", true);
+                    return;
+                }
+                
+                const baseShip = myShips.find(s => s.id === baseId);
+                const matShip = myShips.find(s => s.id === matId);
+                
+                if (!baseShip || !matShip) return;
+                
+                // Calculate Proficiency gain
+                const tData = SHIP_TYPES[matShip.type];
+                const baseVal = Math.floor(tData.cost / 100); // Base value from ship type
+                
+                // Calculate total accumulated exp
+                let totalExp = matShip.exp || 0;
+                for (let l = 1; l < (matShip.level || 1); l++) {
+                    totalExp += l * 100;
+                }
+                
+                // 10% to 30% of total exp
+                const ratio = 0.1 + Math.random() * 0.2; 
+                const gainedProf = Math.floor((baseVal + Math.floor(totalExp * ratio)) / 10);
+                
+                baseShip.proficiency = (baseShip.proficiency || 0) + gainedProf;
+                
+                // Remove material ship
+                myShips = myShips.filter(s => s.id !== matId);
+                
+                showPortMessage(`Merged! ${baseShip.name} gained +${gainedProf}% Proficiency.`);
+                updatePortUI();
+            });
+
+            document.getElementById('btn-sortie').addEventListener('click', () => {
+                consecutiveBattles = 0;
+                startBattle();
+            });
 
             document.getElementById('btn-return').addEventListener('click', () => {
-                gameState = 'port';
-                document.getElementById('battle-ui').classList.add('hidden');
-                document.getElementById('battle-result').classList.add('hidden');
-                document.getElementById('port-ui').style.transform = 'translateX(0)';
-                document.getElementById('hp-layer').innerHTML = ''; // Clear HP bars
-                clearBattleScene();
-                updatePortUI();
+                consecutiveBattles = 0;
+                returnToPort();
+            });
+
+            document.getElementById('btn-continue').addEventListener('click', () => {
+                continueBattle();
             });
 
             // Save Data Export
             document.getElementById('btn-export').addEventListener('click', () => {
                 try {
-                    const saveObj = { credits, shipIdCounter, myShips, fleetIds };
+                    const saveObj = { credits, shipIdCounter, myShips, fleetIds, fleetLimitExtensions };
                     const jsonString = JSON.stringify(saveObj);
                     const compressed = pako.gzip(jsonString);
                     const blob = new Blob([compressed], { type: 'application/gzip' });
@@ -317,17 +474,24 @@
                         shipIdCounter = data.shipIdCounter || 1;
                         myShips = data.myShips || [];
                         fleetIds = data.fleetIds || [];
+                        fleetLimitExtensions = data.fleetLimitExtensions || 0;
                         
-                        // Retrofit for old save formats missing level/exp/maxLevel
+                        // Retrofit parameters
                         myShips.forEach(ship => {
                             if (ship.level === undefined) ship.level = 1;
                             if (ship.exp === undefined) ship.exp = 0;
                             if (ship.maxLevel === undefined) ship.maxLevel = 20;
+                            if (ship.proficiency === undefined) ship.proficiency = 0;
                         });
                         
+                        const currentLimit = 4 + fleetLimitExtensions;
+                        if(fleetIds.length > currentLimit) {
+                            fleetIds = fleetIds.slice(0, currentLimit);
+                        }
+
                         updatePortUI();
                         showPortMessage("Save imported successfully!");
-                        document.getElementById('import-file').value = ""; // Reset
+                        document.getElementById('import-file').value = "";
                     } catch (err) {
                         showPortMessage("Import Failed. The file might be corrupted.", true);
                     }
@@ -336,13 +500,133 @@
             });
         }
 
+        function setupMobileControls() {
+            // Use pointer events for reliable touch/mouse interaction on mobile controls
+            const bindPointer = (id, key) => {
+                const el = document.getElementById(id);
+                const press = (e) => { e.preventDefault(); e.stopPropagation(); keys[key] = true; };
+                const release = (e) => { e.preventDefault(); e.stopPropagation(); keys[key] = false; };
+                
+                el.addEventListener('pointerdown', press);
+                el.addEventListener('pointerup', release);
+                el.addEventListener('pointerleave', release);
+                el.addEventListener('pointercancel', release);
+            };
+
+            bindPointer('dpad-up', 'w');
+            bindPointer('dpad-down', 's');
+            bindPointer('dpad-left', 'a');
+            bindPointer('dpad-right', 'd');
+            bindPointer('btn-mobile-escape', 'e');
+
+            const btnSwitch = document.getElementById('btn-mobile-switch');
+            btnSwitch.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if(gameState !== 'battle') return;
+                const friendlies = activeShips.filter(s => !s.isEnemy && s.hp > 0);
+                if(friendlies.length <= 1) return;
+                
+                let nextIdx = -1;
+                for(let i=1; i<friendlies.length; i++) {
+                    const checkIdx = (controlledShipIndex + i) % (4 + fleetLimitExtensions);
+                    const ship = friendlies.find(s => s.fleetIndex === checkIdx);
+                    if (ship) { nextIdx = checkIdx; break; }
+                }
+                
+                if (nextIdx !== -1) {
+                    controlledShipIndex = nextIdx;
+                    const s = friendlies.find(s => s.fleetIndex === controlledShipIndex);
+                    showBattleMessage(`CONTROL SWITCHED TO: ${s.name.toUpperCase()}`);
+                }
+            });
+
+            const btnFire = document.getElementById('btn-mobile-fire');
+            btnFire.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if(gameState !== 'battle') return;
+                
+                const friendlies = activeShips.filter(s => !s.isEnemy && s.hp > 0);
+                const flagship = friendlies.find(s => s.fleetIndex === controlledShipIndex);
+                if(!flagship) return;
+
+                // Auto aim logic for mobile
+                const enemies = activeShips.filter(s => s.isEnemy && s.hp > 0);
+                if(enemies.length > 0) {
+                    let closest = enemies[0];
+                    let minDist = flagship.mesh.position.distanceTo(closest.mesh.position);
+                    
+                    for(let i=1; i<enemies.length; i++) {
+                        const d = flagship.mesh.position.distanceTo(enemies[i].mesh.position);
+                        if(d < minDist) { minDist = d; closest = enemies[i]; }
+                    }
+                    
+                    const targetPos = closest.mesh.position.clone();
+                    targetPos.x += (Math.random() - 0.5) * 15;
+                    targetPos.z += (Math.random() - 0.5) * 15;
+                    
+                    friendlies.forEach(ship => ship.fireAt(targetPos, closest));
+                    createTargetMarker(targetPos);
+                }
+            });
+        }
+
+        function updateEnhanceDropdowns() {
+            const baseSelect = document.getElementById('enhance-base');
+            const currentBase = baseSelect.value;
+            
+            baseSelect.innerHTML = '';
+            myShips.forEach(ship => {
+                const option = document.createElement('option');
+                option.value = ship.id;
+                option.textContent = `${ship.name} (Lv.${ship.level})`;
+                baseSelect.appendChild(option);
+            });
+            
+            if(currentBase && myShips.find(s => s.id == currentBase)) {
+                baseSelect.value = currentBase;
+            }
+            
+            updateMaterialDropdown();
+        }
+
+        function updateMaterialDropdown() {
+            const baseSelect = document.getElementById('enhance-base');
+            const matSelect = document.getElementById('enhance-material');
+            const baseId = parseInt(baseSelect.value);
+            
+            matSelect.innerHTML = '';
+            let matAdded = false;
+            myShips.forEach(ship => {
+                // Cannot select base ship or fleet active ship as material
+                if (ship.id !== baseId && !fleetIds.includes(ship.id)) {
+                    const option = document.createElement('option');
+                    option.value = ship.id;
+                    option.textContent = `${ship.name} (Lv.${ship.level})`;
+                    matSelect.appendChild(option);
+                    matAdded = true;
+                }
+            });
+            
+            if (!matAdded) {
+                const option = document.createElement('option');
+                option.value = "";
+                option.textContent = "No available material ships";
+                matSelect.appendChild(option);
+            }
+        }
+
         function toggleFleet(id) {
             const index = fleetIds.indexOf(id);
+            const currentLimit = 4 + fleetLimitExtensions;
             if (index > -1) {
                 fleetIds.splice(index, 1);
             } else {
-                if (fleetIds.length < 4) {
+                if (fleetIds.length < currentLimit) {
                     fleetIds.push(id);
+                } else {
+                    showPortMessage("Fleet is full! Expand limit to add more.", true);
                 }
             }
             updatePortUI();
@@ -359,7 +643,7 @@
             
             credits -= 400;
             ship.maxLevel = (ship.maxLevel || 20) + 10;
-            ship.exp = 0; // Reset EXP for next level up
+            ship.exp = 0; 
             
             showPortMessage("Level limit increased by +10!");
             updatePortUI();
@@ -367,6 +651,7 @@
 
         function updatePortUI() {
             document.getElementById('credits-val').textContent = credits;
+            const currentLimit = 4 + fleetLimitExtensions;
             const listEl = document.getElementById('ship-list');
             listEl.innerHTML = '';
             
@@ -379,13 +664,16 @@
                 const isMaxLevel = ship.level >= maxLevel;
                 const reqExp = ship.level * 100;
                 const expPct = isMaxLevel ? 100 : Math.min(100, (ship.exp / reqExp) * 100);
+                const prof = ship.proficiency || 0;
                 
                 const div = document.createElement('div');
                 div.className = `flex justify-between items-center p-3 rounded-lg border ${isFleet ? 'bg-slate-700 border-blue-500' : 'bg-slate-800 border-slate-600'}`;
                 div.innerHTML = `
                     <div class="flex flex-col w-full pr-2">
-                        <div class="flex justify-between items-center">
-                            <span class="font-bold text-blue-300">${ship.name} <span class="text-yellow-400 text-xs ml-1">Lv.${ship.level}/${maxLevel}</span></span>
+                        <div class="flex items-center flex-wrap">
+                            <span class="font-bold text-blue-300 mr-2">${ship.name}</span>
+                            <span class="text-yellow-400 text-[11px] mr-2">Lv.${ship.level}/${maxLevel}</span>
+                            ${prof > 0 ? `<span class="text-pink-400 text-[10px] font-bold">★Prof.+${prof}%</span>` : ''}
                         </div>
                         <span class="text-xs text-gray-400">${typeData.name} | Rng: ${Math.floor(typeData.range * levelMod)} | HP: ${Math.floor(ship.maxHp * levelMod)}</span>
                         <!-- EXP Bar -->
@@ -404,8 +692,17 @@
                 listEl.appendChild(div);
             });
 
-            document.getElementById('fleet-count').textContent = `${fleetIds.length} / 4`;
+            document.getElementById('fleet-count').textContent = `${fleetIds.length} / ${currentLimit}`;
             document.getElementById('btn-sortie').disabled = fleetIds.length === 0;
+            
+            const btnExpand = document.getElementById('btn-expand-fleet');
+            if(fleetLimitExtensions >= 3) {
+                btnExpand.classList.add('hidden');
+            } else {
+                btnExpand.classList.remove('hidden');
+            }
+            
+            updateEnhanceDropdowns();
         }
 
         function showBattleMessage(msg) {
@@ -422,8 +719,7 @@
                 if(keys.hasOwnProperty(e.key)) keys[e.key] = true;
                 if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true;
                 
-                // Ship switching logic using number keys (1, 2, 3, 4)
-                if (gameState === 'battle' && ['1', '2', '3', '4'].includes(e.key)) {
+                if (gameState === 'battle' && ['1', '2', '3', '4', '5', '6', '7'].includes(e.key)) {
                     const targetIndex = parseInt(e.key) - 1;
                     const targetShip = activeShips.find(s => !s.isEnemy && s.fleetIndex === targetIndex && s.hp > 0);
                     if (targetShip) {
@@ -438,13 +734,14 @@
                 if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false;
             });
 
-            // Tap/Click for firing
+            // Tap/Click for firing (Mainly PC, Mobile UI ignores this because of pointerdown stopPropagation)
             const canvas = document.getElementById('three-canvas');
             canvas.addEventListener('pointerdown', (e) => {
                 if (gameState !== 'battle') return;
-                
-                // Prevent firing if result screen is up
                 if (!document.getElementById('battle-result').classList.contains('hidden')) return;
+                
+                // Allow direct tap on canvas for mobile if they prefer not to use the Fire button
+                if (controlMode === 'mobile' && e.clientY > window.innerHeight * 0.7) return; 
 
                 const rect = canvas.getBoundingClientRect();
                 const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -459,7 +756,6 @@
                     const friendlies = activeShips.filter(s => !s.isEnemy && s.hp > 0);
                     friendlies.forEach(ship => ship.fireAt(targetPos));
                     
-                    // Visual marker for target
                     createTargetMarker(targetPos);
                 }
             });
@@ -476,14 +772,33 @@
             setTimeout(() => scene.remove(mesh), 500);
         }
 
+        function updateFleetHpUI() {
+            const container = document.getElementById('fleet-hp-container');
+            container.innerHTML = '';
+            
+            const friendlies = activeShips.filter(s => !s.isEnemy);
+            friendlies.forEach(ship => {
+                const pct = Math.max(0, (ship.hp / ship.maxHp) * 100);
+                const isDead = ship.hp <= 0;
+                container.innerHTML += `
+                    <div class="bg-black bg-opacity-70 border border-slate-700 p-1.5 rounded-sm w-44 backdrop-blur-sm shadow-md transition-opacity ${isDead ? 'opacity-50' : 'opacity-100'}">
+                        <div class="flex justify-between items-baseline mb-1">
+                            <span class="text-[10px] font-bold text-white truncate w-24">${ship.name}</span>
+                            <span class="text-[9px] font-mono ${isDead ? 'text-red-500' : 'text-green-300'}">${Math.ceil(ship.hp)}/${Math.ceil(ship.maxHp)}</span>
+                        </div>
+                        <div class="w-full h-1.5 bg-gray-800 rounded-sm overflow-hidden">
+                            <div class="h-full ${isDead ? 'bg-red-600' : 'bg-green-500'} transition-all duration-300" style="width: ${pct}%"></div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
         // --- 3D Objects & Classes ---
-        
         function createShipMesh(typeData, isEnemy) {
             const group = new THREE.Group();
-            // Darker/reddish tint for enemies
             const baseColor = isEnemy ? new THREE.Color(typeData.color).lerp(new THREE.Color(0xff0000), 0.3) : typeData.color;
             
-            // Main Hull
             const hullGeo = new THREE.BoxGeometry(typeData.size[0], typeData.size[1], typeData.size[2]);
             const hullMat = new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.6 });
             const hull = new THREE.Mesh(hullGeo, hullMat);
@@ -492,7 +807,6 @@
             if (typeData.name.includes("Submarine")) hull.position.y -= typeData.size[1] * 0.4;
             group.add(hull);
             
-            // Bridge/Superstructure
             if (!typeData.name.includes("Carrier") && !typeData.name.includes("Submarine")) {
                 const bridgeGeo = new THREE.BoxGeometry(typeData.size[0]*0.6, typeData.size[1]*1.2, typeData.size[2]*0.25);
                 const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x888888 });
@@ -502,7 +816,6 @@
                 group.add(bridge);
             }
             
-            // Carrier Deck lines
             if (typeData.name.includes("Carrier")) {
                 const deckGeo = new THREE.PlaneGeometry(typeData.size[0]*0.8, typeData.size[2]*0.9);
                 const deckMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
@@ -512,12 +825,11 @@
                 group.add(deck);
             }
 
-            // Direction indicator (bow)
             const bowGeo = new THREE.ConeGeometry(typeData.size[0]/2, typeData.size[0], 4);
             const bowMat = new THREE.MeshStandardMaterial({ color: baseColor });
             const bow = new THREE.Mesh(bowGeo, bowMat);
             bow.rotation.x = Math.PI/2;
-            bow.rotation.y = Math.PI/4; // Diamond shape
+            bow.rotation.y = Math.PI/4; 
             bow.position.z = typeData.size[2]/2 + typeData.size[0]/2;
             bow.position.y = typeData.size[1]/2;
             if (typeData.name.includes("Submarine")) bow.position.y -= typeData.size[1] * 0.4;
@@ -532,21 +844,21 @@
                 this.name = data.name;
                 this.typeData = typeData;
                 this.isEnemy = isEnemy;
-                this.dataRef = data; // Reference to update exp/level in myShips
+                this.dataRef = data; 
+                this.sessionExp = 0; 
                 
                 this.level = data.level || 1;
-                const statMod = 1 + (this.level - 1) * 0.05; // +5% per level
+                const statMod = 1 + (this.level - 1) * 0.05;
 
                 this.maxHp = data.maxHp * statMod;
-                this.hp = isEnemy ? this.maxHp : (data.hp * statMod);
-                if (!isEnemy) this.hp = this.maxHp; // Refill HP on start
+                this.hp = isEnemy ? this.maxHp : data.hp; 
                 
-                this.speed = 0; // Current speed
+                this.speed = 0;
                 this.maxSpeed = typeData.speed;
                 this.accel = typeData.accel;
                 this.turnSpeed = typeData.turnSpeed;
                 this.range = typeData.range * statMod;
-                this.fleetIndex = 0; // Assigned later during deployment
+                this.fleetIndex = 0;
                 
                 this.weapons = typeData.weapons;
                 this.weaponTimers = {};
@@ -561,15 +873,21 @@
             addExp(amount) {
                 if (this.isEnemy || !this.dataRef) return;
                 
+                // Proficiency bonus application (e.g. 10 prof = 10% bonus)
+                const profBonus = 1 + (this.dataRef.proficiency || 0) / 100;
+                const streakMod = 1 + (consecutiveBattles * 0.5); 
+                const finalExp = amount * streakMod * profBonus;
+                
+                this.sessionExp += finalExp;
+
                 const maxLevel = this.dataRef.maxLevel || 20;
                 
-                // Block exp gain if at cap
                 if (this.dataRef.level >= maxLevel) {
                     this.dataRef.exp = maxLevel * 100;
                     return; 
                 }
 
-                this.dataRef.exp += amount;
+                this.dataRef.exp += finalExp;
                 
                 let reqExp = this.dataRef.level * 100;
                 while (this.dataRef.exp >= reqExp && this.dataRef.level < maxLevel) {
@@ -580,7 +898,7 @@
                     createMuzzleFlash(this.mesh.position); // Level up effect
                     
                     if (this.dataRef.level >= maxLevel) {
-                        this.dataRef.exp = maxLevel * 100; // Cap visual representation
+                        this.dataRef.exp = maxLevel * 100; 
                         break;
                     }
                     reqExp = this.dataRef.level * 100;
@@ -591,7 +909,6 @@
                 this.hpBarContainer = document.createElement('div');
                 this.hpBarContainer.className = 'hp-bar-container';
                 
-                // Add Level Label above HP bar
                 this.levelLabel = document.createElement('div');
                 this.levelLabel.className = 'absolute -top-[18px] left-1/2 transform -translate-x-1/2 text-[10px] font-bold whitespace-nowrap drop-shadow-[0_1px_1px_rgba(0,0,0,1)]';
                 this.levelLabel.style.color = this.isEnemy ? '#fca5a5' : '#86efac';
@@ -615,6 +932,9 @@
                 if (this.hp <= 0) return;
                 this.hp -= amount;
                 this.updateHpBarVisual();
+                
+                if (!this.isEnemy) updateFleetHpUI();
+
                 if (this.hp <= 0) {
                     this.sink();
                 }
@@ -679,7 +999,6 @@
                 }
 
                 if (this.hp > 0) {
-                    // 艦の移動を縦横（X, Z）のみに制限し、Y軸の浮遊を防止
                     this.mesh.position.y = 0;
 
                     const pos = this.mesh.position.clone();
@@ -753,18 +1072,17 @@
                     this.mesh.position.x += this.vx * dt;
                     this.mesh.position.z += this.vz * dt;
                     
-                    if (Math.abs(this.mesh.position.x) > 2000 || Math.abs(this.mesh.position.z) > 2000) {
+                    if (Math.abs(this.mesh.position.x) > 3000 || Math.abs(this.mesh.position.z) > 3000) {
                         this.destroy(); return;
                     }
                     
                     for (let s of activeShips) {
                         if (s.isEnemy !== this.isEnemy && s.hp > 0) {
-                            // 魚雷の命中判定を明確化するため、高さ(Y)を無視した2D平面距離で判定する
                             const dx = this.mesh.position.x - s.mesh.position.x;
                             const dz = this.mesh.position.z - s.mesh.position.z;
                             const dist2d = Math.hypot(dx, dz);
                             
-                            const hitRadius = s.typeData.size[2] / 2 + 3; // 艦の全長を基準に少し余裕を持たせる
+                            const hitRadius = s.typeData.size[2] / 2 + 3; 
                             if (dist2d < hitRadius) {
                                 explodeAndDamage(this.mesh.position, this.damage, this.isEnemy, this.splash, this.sourceShip);
                                 this.destroy();
@@ -856,7 +1174,6 @@
             
             activeShips.forEach(ship => {
                 if (ship.isEnemy !== isEnemySource && ship.hp > 0) {
-                    // 爆発のダメージ判定も高さ(Y)を無視した2D平面距離に変更
                     const dx = ship.mesh.position.x - pos.x;
                     const dz = ship.mesh.position.z - pos.z;
                     const dist = Math.hypot(dx, dz);
@@ -865,14 +1182,13 @@
                         ship.takeDamage(damage);
 
                         if(!isEnemySource && sourceShip) {
-                            // Exp scales with enemy level
-                            const expHit = Math.floor(5 * (1 + ship.level * 0.2));
+                            const expHit = 5 * (1 + ship.level * 0.2);
                             sourceShip.addExp(expHit); 
                             battleEarnedCredits += 5; 
                             credits += 5;
 
                             if (ship.hp <= 0) {
-                                const expKill = Math.floor(25 * (1 + ship.level * 0.2));
+                                const expKill = 25 * (1 + ship.level * 0.2);
                                 sourceShip.addExp(expKill);
                                 battleEarnedCredits += 100; 
                                 credits += 100;
@@ -902,15 +1218,28 @@
             setTimeout(() => scene.remove(mesh), 100);
         }
 
-        // --- Battle Logic ---
-        function clearBattleScene() {
-            activeShips.forEach(s => {
-                scene.remove(s.mesh);
-                if (s.hpBarContainer && s.hpBarContainer.parentNode) {
-                    s.hpBarContainer.parentNode.removeChild(s.hpBarContainer);
+        // --- Battle Management ---
+        function clearBattleScene(keepFriendlies = false) {
+            if (!keepFriendlies) {
+                activeShips.forEach(s => {
+                    scene.remove(s.mesh);
+                    if (s.hpBarContainer && s.hpBarContainer.parentNode) {
+                        s.hpBarContainer.parentNode.removeChild(s.hpBarContainer);
+                    }
+                });
+                activeShips = [];
+            } else {
+                for (let i = activeShips.length - 1; i >= 0; i--) {
+                    const s = activeShips[i];
+                    if (s.isEnemy || s.hp <= 0) {
+                        scene.remove(s.mesh);
+                        if (s.hpBarContainer && s.hpBarContainer.parentNode) {
+                            s.hpBarContainer.parentNode.removeChild(s.hpBarContainer);
+                        }
+                        activeShips.splice(i, 1);
+                    }
                 }
-            });
-            activeShips = [];
+            }
             
             projectiles.forEach(p => scene.remove(p.mesh));
             projectiles = [];
@@ -923,7 +1252,8 @@
             gameState = 'battle';
             battleEarnedCredits = 0;
             escapeTimer = 0;
-            controlledShipIndex = 0; // Default to first ship
+            survivalExpTimer = 0;
+            controlledShipIndex = 0; 
             
             document.getElementById('port-ui').style.transform = 'translateX(-100%)';
             document.getElementById('battle-ui').classList.remove('hidden');
@@ -931,72 +1261,124 @@
             document.getElementById('escape-bar-container').style.display = 'none';
             document.getElementById('escape-text').classList.add('hidden');
             
+            if(controlMode === 'mobile') {
+                document.getElementById('mobile-controls').classList.remove('hidden');
+            } else {
+                document.getElementById('mobile-controls').classList.add('hidden');
+            }
+            
             clearBattleScene();
             
             let flagshipLevel = 1;
 
-            // Deploy Player Fleet
             fleetIds.forEach((id, idx) => {
                 const data = myShips.find(s => s.id === id);
-                if (idx === 0) flagshipLevel = data.level || 1; // Extract level for enemy scaling
+                if (idx === 0) flagshipLevel = data.level || 1;
                 
                 const typeData = SHIP_TYPES[data.type];
-                data.hp = data.maxHp; 
+                
+                const statMod = 1 + ((data.level || 1) - 1) * 0.05;
+                data.hp = data.maxHp * statMod; 
+                
                 const ship = new Ship(data, typeData, false);
                 ship.fleetIndex = idx;
+                ship.sessionExp = 0; 
                 
-                // Formation positioning
                 ship.mesh.position.set(idx * 25 - ((fleetIds.length-1)*25)/2, 0, 150);
-                ship.mesh.rotation.y = 0; // Facing North (+Z)
+                ship.mesh.rotation.y = 0; 
                 activeShips.push(ship);
             });
             
-            // Generate Enemy Fleet
+            updateFleetHpUI();
+            generateEnemies(flagshipLevel);
+            
+            if (activeShips.length > 0) {
+                const flagship = activeShips[0];
+                camera.position.set(flagship.mesh.position.x, flagship.mesh.position.y + 60, flagship.mesh.position.z - 120);
+                camera.lookAt(flagship.mesh.position);
+            }
+        }
+
+        function continueBattle() {
+            consecutiveBattles++;
+            document.getElementById('battle-result').classList.add('hidden');
+            if(controlMode === 'mobile') document.getElementById('mobile-controls').classList.remove('hidden');
+            
+            clearBattleScene(true); 
+            
+            let flagshipLevel = 1;
+            const friendlies = activeShips.filter(s => !s.isEnemy);
+            if(friendlies.length > 0) flagshipLevel = friendlies[0].level;
+            
+            friendlies.forEach((ship, idx) => {
+                ship.mesh.position.set(idx * 25 - ((friendlies.length-1)*25)/2, 0, 150);
+                ship.mesh.rotation.y = 0;
+                ship.speed = 0;
+            });
+
+            generateEnemies(flagshipLevel);
+            updateFleetHpUI();
+        }
+
+        function generateEnemies(flagshipLevel) {
             let totalCost = fleetIds.reduce((sum, id) => sum + SHIP_TYPES[myShips.find(s=>s.id===id).type].cost, 0);
-            let enemyCostPool = totalCost * (0.8 + Math.random() * 0.4); 
+            
+            let difficultyMult = 1 + (consecutiveBattles * 0.2);
+            let enemyCostPool = totalCost * (0.8 + Math.random() * 0.4) * difficultyMult; 
             const types = Object.keys(SHIP_TYPES);
             
             let enemyCount = 0;
-            while (enemyCostPool > 400 && enemyCount < 6) {
+            while (enemyCostPool > 400 && enemyCount < 6 + consecutiveBattles) {
                 let type = types[Math.floor(Math.random() * types.length)];
                 let tData = SHIP_TYPES[type];
                 if (tData.cost > enemyCostPool && enemyCostPool > 600) continue;
                 
-                // Determine Enemy Level based on player flagship
                 let enemyLevel = 2;
                 if (flagshipLevel >= 5) {
-                    const minL = Math.max(1, flagshipLevel - 3);
-                    const maxL = flagshipLevel + 3;
+                    const minL = Math.max(1, flagshipLevel - 3 + Math.floor(consecutiveBattles/2));
+                    const maxL = flagshipLevel + 3 + consecutiveBattles;
                     enemyLevel = Math.floor(Math.random() * (maxL - minL + 1)) + minL;
                 }
                 
                 const eData = { name: 'Enemy ' + tData.name.split(' ')[0], hp: tData.hp, maxHp: tData.hp, level: enemyLevel };
                 const enemy = new Ship(eData, tData, true);
                 enemy.mesh.position.set((Math.random() - 0.5) * 400, 0, -200 - Math.random() * 300);
-                enemy.mesh.rotation.y = Math.PI; // Facing South (-Z)
+                enemy.mesh.rotation.y = Math.PI; 
                 activeShips.push(enemy);
                 
                 enemyCostPool -= tData.cost;
                 enemyCount++;
             }
+        }
+
+        function returnToPort() {
+            gameState = 'port';
+            document.getElementById('battle-ui').classList.add('hidden');
+            document.getElementById('battle-result').classList.add('hidden');
+            document.getElementById('port-ui').style.transform = 'translateX(0)';
+            document.getElementById('hp-layer').innerHTML = ''; 
+            document.getElementById('fleet-hp-container').innerHTML = '';
+            document.getElementById('mobile-controls').classList.add('hidden');
             
-            // Initialize Camera
-            if (activeShips.length > 0) {
-                const flagship = activeShips[0];
-                camera.position.set(
-                    flagship.mesh.position.x, 
-                    flagship.mesh.position.y + 60, 
-                    flagship.mesh.position.z - 120
-                );
-                camera.lookAt(flagship.mesh.position);
-            }
+            clearBattleScene();
+            
+            fleetIds.forEach(id => {
+                const s = myShips.find(s=>s.id===id);
+                if(s) s.hp = s.maxHp;
+            });
+            updatePortUI();
         }
 
         function updateBattle(dt) {
             const friendlies = activeShips.filter(s => !s.isEnemy && s.hp > 0);
             const enemies = activeShips.filter(s => s.isEnemy && s.hp > 0);
             
-            // --- Escape Logic (Hold E) ---
+            survivalExpTimer += dt;
+            if(survivalExpTimer >= 1.0) {
+                friendlies.forEach(s => s.addExp(1));
+                survivalExpTimer = 0;
+            }
+
             if (keys['e'] && friendlies.length > 0) {
                 escapeTimer += dt;
                 document.getElementById('escape-bar-container').style.display = 'block';
@@ -1018,15 +1400,12 @@
                 return;
             }
 
-            // Find currently controlled ship
             let flagship = friendlies.find(s => s.fleetIndex === controlledShipIndex);
             if (!flagship && friendlies.length > 0) {
-                // Auto switch if currently controlled ship is sunk
                 flagship = friendlies[0];
                 controlledShipIndex = flagship.fleetIndex;
             }
 
-            // --- Player Input & Movement ---
             if (flagship) {
                 if (keys['w']) flagship.speed = Math.min(flagship.maxSpeed, flagship.speed + flagship.accel * dt);
                 if (keys['s']) flagship.speed = Math.max(-flagship.maxSpeed/2, flagship.speed - flagship.accel * dt);
@@ -1039,10 +1418,9 @@
                 flagship.mesh.position.z += Math.cos(flagship.mesh.rotation.y) * flagship.speed * dt;
             }
 
-            // --- Escort AI ---
             let escortIndex = 1;
             friendlies.forEach((ship) => {
-                if (ship === flagship) return; // Skip controlled ship
+                if (ship === flagship) return; 
 
                 const offsetX = (escortIndex % 2 === 1 ? -1 : 1) * 30 * Math.ceil(escortIndex/2);
                 const offsetZ = -40 * Math.ceil(escortIndex/2); 
@@ -1057,14 +1435,13 @@
                 if (dist > 10) {
                     const targetAngle = Math.atan2(dx, dz);
                     let angleDiff = targetAngle - ship.mesh.rotation.y;
-                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff)); // Normalize angle
+                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff)); 
                     
                     ship.mesh.rotation.y += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), ship.turnSpeed * dt);
                     ship.speed = Math.min(ship.maxSpeed, dist * 2);
                     ship.mesh.position.x += Math.sin(ship.mesh.rotation.y) * ship.speed * dt;
                     ship.mesh.position.z += Math.cos(ship.mesh.rotation.y) * ship.speed * dt;
                 } else {
-                    // Match flagship heading when in position
                     ship.speed *= 0.9;
                     let angleDiff = flagship.mesh.rotation.y - ship.mesh.rotation.y;
                     angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
@@ -1073,7 +1450,6 @@
                 escortIndex++;
             });
 
-            // --- Enemy AI ---
             enemies.forEach(enemy => {
                 let closest = null;
                 let minDist = Infinity;
@@ -1090,13 +1466,12 @@
                         enemy.fireAt(targetPos, closest);
                     }
                     
-                    // Always try to face the target to fix drifting bug
                     const dx = closest.mesh.position.x - enemy.mesh.position.x;
                     const dz = closest.mesh.position.z - enemy.mesh.position.z;
                     const targetAngle = Math.atan2(dx, dz);
                     
                     let angleDiff = targetAngle - enemy.mesh.rotation.y;
-                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff)); // Normalize angle
+                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
                     
                     enemy.mesh.rotation.y += Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), enemy.turnSpeed * dt);
                     
@@ -1111,10 +1486,8 @@
                 enemy.mesh.position.z += Math.cos(enemy.mesh.rotation.y) * enemy.speed * dt;
             });
 
-            // --- Camera Control (Auto Follow) ---
             if (flagship) {
                 const target = flagship.mesh.position;
-                
                 const backOffset = 120;
                 const upOffset = 60;
                 
@@ -1139,23 +1512,56 @@
             
             document.getElementById('escape-bar-container').style.display = 'none';
             document.getElementById('escape-text').classList.add('hidden');
+            document.getElementById('mobile-controls').classList.add('hidden');
             
             document.getElementById('battle-result').classList.remove('hidden');
             const title = document.getElementById('result-title');
             const desc = document.getElementById('result-desc');
+            const streakMsg = document.getElementById('result-streak');
+            const btnContinue = document.getElementById('btn-continue');
+            const expList = document.getElementById('result-exp-list');
+            
+            expList.innerHTML = ''; 
             
             if (isWin) {
                 title.textContent = "VICTORY";
-                title.className = "text-5xl font-black mb-4 text-green-400";
+                title.className = "text-5xl font-black mb-2 text-green-400";
+                btnContinue.classList.remove('hidden');
             } else if (isEscape) {
                 title.textContent = "RETREAT";
-                title.className = "text-5xl font-black mb-4 text-yellow-500";
+                title.className = "text-5xl font-black mb-2 text-yellow-500";
+                btnContinue.classList.add('hidden');
             } else {
                 title.textContent = "DEFEAT";
-                title.className = "text-5xl font-black mb-4 text-red-500";
+                title.className = "text-5xl font-black mb-2 text-red-500";
+                btnContinue.classList.add('hidden');
+            }
+
+            if (consecutiveBattles > 0) {
+                streakMsg.classList.remove('hidden');
+                streakMsg.textContent = `Consecutive Battles Bonus Active! (Multiplier: x${1 + (consecutiveBattles*0.5)})`;
+            } else {
+                streakMsg.classList.add('hidden');
             }
 
             desc.innerHTML = `Battle Earnings<br><span class="text-3xl text-yellow-400 font-bold mt-2 block">+${battleEarnedCredits} G</span>`;
+
+            const friendlies = activeShips.filter(s => !s.isEnemy);
+            if (friendlies.length === 0) {
+                expList.innerHTML = '<div class="text-gray-500 text-sm italic text-center py-2">Fleet destroyed.</div>';
+            } else {
+                friendlies.forEach(ship => {
+                    const isMax = ship.dataRef && (ship.dataRef.level >= (ship.dataRef.maxLevel || 20));
+                    expList.innerHTML += `
+                        <div class="flex justify-between items-center text-sm border-b border-slate-700 last:border-0 pb-1">
+                            <span class="text-blue-300 font-bold truncate w-32" title="${ship.name}">${ship.name}</span>
+                            <span class="${isMax ? 'text-purple-400' : 'text-green-400'}">
+                                ${isMax ? 'MAX LEVEL' : '+' + Math.floor(ship.sessionExp) + ' EXP'}
+                            </span>
+                        </div>
+                    `;
+                });
+            }
         }
 
         function animate() {
